@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 400" role="img" aria-label="creative-forge">
+  <defs>
+    <linearGradient id="dawn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dff1ff"/>
+      <stop offset="55%" stop-color="#ffe9c9"/>
+      <stop offset="100%" stop-color="#ffd39a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="60%" r="60%">
+      <stop offset="0%" stop-color="#fff3d6" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#fff3d6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="400" fill="url(#dawn)"/>
+  <rect width="1280" height="400" fill="url(#glow)"/>
+  <g transform="translate(200,200)">
+    <circle r="92" fill="#ffd98a"/>
+    <circle cy="4" r="58" fill="#ff8a4c"/>
+    <g stroke="#b3541e" stroke-width="8" stroke-linecap="round">
+      <line x1="0" y1="-124" x2="0" y2="-98"/>
+      <line x1="0" y1="98" x2="0" y2="124"/>
+      <line x1="-124" y1="0" x2="-98" y2="0"/>
+      <line x1="98" y1="0" x2="124" y2="0"/>
+      <line x1="-88" y1="-88" x2="-70" y2="-70"/>
+      <line x1="70" y1="70" x2="88" y2="88"/>
+      <line x1="-88" y1="88" x2="-70" y2="70"/>
+      <line x1="70" y1="-70" x2="88" y2="-88"/>
+    </g>
+    <circle cx="-19" cy="-4" r="6.5" fill="#5b2c12"/>
+    <circle cx="19" cy="-4" r="6.5" fill="#5b2c12"/>
+    <path d="M-19 20 Q0 34 19 20" stroke="#5b2c12" stroke-width="7.5" fill="none" stroke-linecap="round"/>
+  </g>
+  <g font-family="Georgia, 'Times New Roman', serif" fill="#2c2419">
+    <text x="360" y="185" font-size="76" font-weight="700">creative-forge</text>
+    <text x="362" y="240" font-size="30" fill="#5d4c37">Paid ads by AI agents. Receipts by design.</text>
+    <text x="362" y="288" font-size="22" fill="#a8794a">research → brief → localized creatives → sealed QA → publish PAUSED → learn</text>
+  </g>
+</svg>
