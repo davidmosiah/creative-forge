@@ -1,0 +1,75 @@
+version: 1
+media_type: video
+brief_ref: demo-pilot
+concept_id: morning-walk-relief
+variant_id: morning-walk-video-en-v1
+target_markets: [us]
+target_platforms: [meta]
+template: modular-story
+composition: CreativeVideo
+format: story
+fps: 30
+duration_seconds: 15
+concurrency: 1
+audio_strategy: intentional_silence
+safe_zones: {top: 0.14, bottom: 0.20}
+claims_used: [daily_walk, daily_free]
+research_refs: [demo-0000000000000003]
+asset_refs: [sunrise-sun-mascot]
+references:
+  - id: demo-0000000000000003
+    media_type: video
+    source_url: https://www.facebook.com/ads/library/?id=0000000000000003
+    usage: structural_reference_only
+assets:
+  sun:
+    kind: image
+    path: assets/sunrise-demo/sun.svg
+    asset_ref: sunrise-sun-mascot
+    fit: contain
+audio: null
+muted: true
+locales:
+  en-US:
+    copy_language: en
+    copy:
+      eyebrow: Sunrise Walks
+      hook: Woke up tense again?
+      promise: One guided sunrise walk a day. Breath, pace, and light.
+      cta: Download free
+    ad_copy:
+      primary_text: "Woke up tense? One guided sunrise walk, free every day. No account."
+      headline: "Walk before the noise"
+      description: "A calmer start, guided."
+    scenes:
+      - id: hook
+        start_seconds: 0
+        duration_seconds: 4
+        layout: full-bleed
+        background: "#1c2733"
+        foreground: "#fff3d6"
+        accent: "#ffb26b"
+        copy: {eyebrow: eyebrow, headline: hook}
+        asset: sun
+        enter: fade
+      - id: promise
+        start_seconds: 4
+        duration_seconds: 7
+        layout: bottom
+        background: "#2b3a4a"
+        foreground: "#fff3d6"
+        accent: "#ffb26b"
+        copy: {body: promise}
+        asset: sun
+        enter: rise
+      - id: cta
+        start_seconds: 11
+        duration_seconds: 4
+        layout: center
+        background: "#c65a1e"
+        foreground: "#fff3d6"
+        accent: "#fff3d6"
+        cta_foreground: "#c65a1e"
+        copy: {cta: cta}
+        asset: sun
+        enter: cut

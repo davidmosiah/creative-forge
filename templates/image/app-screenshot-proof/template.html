@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; }
+  body { background: {{ palette.bg_top }}; }
+  .ad {
+    position: fixed; inset: 0; overflow: hidden;
+    display: grid; grid-template-rows: 61% 39%;
+    font-family: {{ fonts.body }};
+    color: {{ palette.ink }};
+    background: {{ palette.bg_top }};
+  }
+  .product {
+    position: relative; min-height: 0; overflow: hidden;
+    background: {{ palette.bg_mid }};
+  }
+  .product img {
+    width: 100%; height: 100%; object-fit: cover; object-position: top center;
+    display: block;
+  }
+  .product::after {
+    content: ""; position: absolute; inset: auto 0 0; height: 16%;
+    background: linear-gradient(to bottom, transparent, {{ palette.bg_mid }});
+  }
+  .message {
+    position: relative; min-height: 0;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; padding: 4.2vmin 6.2vmin 4.8vmin;
+    background:
+      radial-gradient(circle at 50% 0%, {{ palette.halo_blue }}, transparent 54%),
+      linear-gradient(160deg, {{ palette.bg_mid }}, {{ palette.bg_top }} 74%);
+    border-top: max(2px, .24vmin) solid {{ palette.accent }};
+  }
+  .kicker {
+    color: {{ palette.accent }}; font-size: 2.05vmin; line-height: 1.15;
+    font-weight: 800; letter-spacing: .22em; text-transform: uppercase;
+    margin-bottom: 1.8vmin;
+  }
+  .headline {
+    max-width: 18em; font-family: {{ fonts.headline }}; font-size: 5.4vmin;
+    line-height: 1.03; font-weight: 850; letter-spacing: -.025em;
+  }
+  .headline b { color: {{ palette.accent }}; }
+  .foot {
+    margin-top: 3vmin; display: flex; align-items: center; justify-content: center;
+    gap: 1.35vmin; min-height: 5vmin;
+  }
+  .foot img {
+    width: 5vmin; height: 5vmin; border-radius: 1.15vmin;
+    box-shadow: 0 .6vmin 2vmin rgba(0,0,0,.36);
+  }
+  .brand { color: {{ palette.ink }}; font-size: 2.35vmin; font-weight: 800; }
+  .pill {
+    margin-left: .5vmin; padding: 1.15vmin 2vmin;
+    color: {{ palette.on_accent }}; background: {{ palette.accent }};
+    border-radius: .65vmin; font-size: 1.9vmin; font-weight: 900;
+    letter-spacing: .02em;
+  }
+
+  @media (max-aspect-ratio: 10/16) {
+    .ad { grid-template-rows: 65% 35%; }
+    .headline { font-size: 5.8vmin; }
+    .message { padding-top: 3.6vmin; padding-bottom: 320px; }
+  }
+
+  @media (min-aspect-ratio: 16/10) {
+    .ad { grid-template-columns: 57% 43%; grid-template-rows: 100%; }
+    .product::after {
+      inset: 0 0 0 auto; width: 16%; height: 100%;
+      background: linear-gradient(to right, transparent, {{ palette.bg_mid }});
+    }
+    .message { border-top: 0; border-left: max(2px, .24vmin) solid {{ palette.accent }}; }
+    .headline { font-size: max(44px, 6.2vmin); }
+    .kicker { font-size: max(16px, 1.9vmin); }
+    .foot { margin-top: 2.4vmin; }
+    .foot img { width: 4.4vmin; height: 4.4vmin; }
+    .brand { font-size: max(16px, 2.1vmin); }
+    .pill { font-size: max(16px, 2.1vmin); }
+  }
+</style>
+</head>
+<body>
+  <div class="ad">
+    <div class="product"><img src="{{ bg_image_url }}" alt=""></div>
+    <div class="message">
+      <div class="kicker">{{ copy.kicker }}</div>
+      <div class="headline">{{ copy.headline }}<br><b>{{ copy.headline_accent }}</b></div>
+      <div class="foot">
+        <img src="{{ icon_url }}" alt="">
+        <span class="brand">{{ name }}</span>
+        <span class="pill">{{ copy.cta }}</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

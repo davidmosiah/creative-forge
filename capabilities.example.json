@@ -1,0 +1,11 @@
+{
+  "provider": "meta_ads_mcp",
+  "agent": "claude",
+  "checked_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "tools": [
+    "ads_create_creative",
+    "ads_create_ad",
+    "replace-with-real-discovered-ad-readback-tool"
+  ],
+  "readback_tool": "replace-with-real-discovered-ad-readback-tool"
+}

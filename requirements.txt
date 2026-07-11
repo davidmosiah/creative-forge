@@ -1,0 +1,3 @@
+# YAML contracts plus local image inspection/contact-sheet generation.
+PyYAML>=6.0
+Pillow>=10.0

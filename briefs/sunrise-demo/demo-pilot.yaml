@@ -1,0 +1,28 @@
+version: 1
+id: demo-pilot
+app: sunrise-demo
+status: approved
+approved_by: demo-operator
+objective: "Demonstrate the end-to-end creative pipeline with fictional research"
+primary_kpi: qualified_install_rate
+markets: [us, mexico]
+destination:
+  ref: default
+  type: app_store
+  url: "https://apps.apple.com/app/id0000000000"
+hypothesis:
+  action: "Open with one concrete morning tension and demonstrate the guided walk"
+  expected_result: "Qualified installs from people who want calmer mornings"
+  reason: "The (fictional) observed pattern frames the walk as relief"
+test_design:
+  isolated_variable: hook_angle
+  constants: [offer, app_store_destination, broad_market_audience, core_claims]
+measurement:
+  observation_window_hours: 72
+  attribution_window: {click_days: 7, view_days: 1}
+  currency: USD
+concepts:
+  - id: morning-walk-relief
+    lineage: competitor_pattern
+    research_refs: [demo-0000000000000001, demo-0000000000000003]
+    agent_rationale: "Adapt the fictional pain-to-peace structure to the demo product's real (fictional) daily walk."

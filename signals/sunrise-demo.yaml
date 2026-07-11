@@ -1,0 +1,18 @@
+# FICTIONAL demo snapshot — shapes only. Real apps refresh this from PostHog
+# with production filters; ROAS is never invented (paid_media unavailable).
+version: 1
+app: sunrise-demo
+observed_at: "2026-07-11T00:00:00Z"
+expires_at: "2027-12-31T23:59:59Z"
+sources:
+  - kind: posthog
+    project_id: 999999
+    window_days: 30
+    production_filters: [not_testflight, not_emulator, app_name=Sunrise Walks]
+    query_contract: country_funnel_v1
+  - kind: paid_media
+    status: unavailable
+    note: "Fictional demo — no spend data; never compute ROAS from nothing."
+countries:
+  US: { opened_users: 40, first_value_users: 22, ritual_users: 20, retained_users: 6, paywall_users: 18, purchase_started_users: 4, purchase_users: 1, trial_users: 2, renewal_users: 0 }
+  MX: { opened_users: 15, first_value_users: 9, ritual_users: 8, retained_users: 2, paywall_users: 7, purchase_started_users: 1, purchase_users: 0, trial_users: 1, renewal_users: 0 }

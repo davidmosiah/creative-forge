@@ -1,0 +1,24 @@
+name: modular-story
+composition: CreativeVideo
+agent_driven: true
+fps: 30
+max_concurrency: 1
+formats:
+  story:
+    width: 1080
+    height: 1920
+    safe_zones: {top: 0.14, bottom: 0.20}
+  portrait:
+    width: 1080
+    height: 1350
+    safe_zones: {top: 0.08, bottom: 0.10}
+  square:
+    width: 1080
+    height: 1080
+    safe_zones: {top: 0.08, bottom: 0.10}
+supported_layouts: [center, bottom, split, full-bleed]
+supported_enters: [cut, fade, rise]
+contract:
+  - The agent authors scene order, timing, localized copy, assets, and direction.
+  - The template renders supplied props and does not rank hooks or concepts.
+  - Audio is optional; every scene plan must remain intelligible when muted.

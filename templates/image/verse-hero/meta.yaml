@@ -1,0 +1,17 @@
+name: verse-hero
+observed_angle: "value-first devotional — the day's verse/line as hero"
+swipe_angles: [morning-relief]
+best_for: "broad top-of-funnel; low friction; brand-building; carousel day 1"
+swipe_sources: [DawnFit (fictional), CalmStride (fictional)]
+uses_mascot: true
+rules:
+  - "Verse text must be public-domain or properly licensed for the target language."
+  - "Keep the line short enough to breathe (max ~90 chars)."
+copy_fields:
+  verse: "the hero line (verse or short promise)"
+  reference: "attribution (e.g. 'Daily Line 1') — rendered uppercase/spaced"
+  cta: "gentle CTA (e.g. 'Comece o dia assim')"
+limits: { verse: 95, reference: 30, cta: 20 }
+formats: [square, portrait, story, landscape]   # simple → works in all
+safe_zones:
+  story: { top: 250, bottom: 320 }

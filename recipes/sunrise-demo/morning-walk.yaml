@@ -1,0 +1,50 @@
+template: pain-headline-cta
+format: square
+brief_ref: demo-pilot
+concept_id: morning-walk-relief
+target_markets: [us, mexico]
+target_platforms: [meta]
+asset_refs: [sunrise-icon, sunrise-sun-mascot]
+swiped_from: "StrideCo (fictional) — pain-to-peace morning walk"
+research_refs: [demo-0000000000000001]
+claims_used: [daily_walk, daily_free, no_account]
+
+ad_copy:
+  en:
+    primary_text: "Woke up tense? One guided sunrise walk, free every day. No account."
+    headline: "Walk before the noise"
+    description: "A calmer start, guided."
+  es:
+    primary_text: "¿Despertaste tenso? Una caminata guiada al amanecer, gratis cada día. Sin cuenta."
+    headline: "Camina antes del ruido"
+    description: "Un comienzo más calmado."
+
+locales:
+  en:
+    pain: "Woke up tense again?"
+    headline: "Walk it off"
+    headline_accent: "before the world wakes."
+    sub: "One guided sunrise walk a day: breath, pace, and light. Free every day — no account."
+    cta: "Download free"
+  es:
+    pain: "¿Despertaste tenso otra vez?"
+    headline: "Camina"
+    headline_accent: "antes del ruido."
+    sub: "Una caminata guiada al amanecer por día: respiración, ritmo y luz. Gratis cada día — sin cuenta."
+    cta: "Descarga gratis"
+
+image:
+  kind: mascot
+
+market_overrides:
+  mexico:
+    copy:
+      pain: "¿Amaneciste con la mente cargada?"
+      headline: "Camina"
+      headline_accent: "antes del ruido."
+      sub: "Una caminata guiada al amanecer por día: respiración, ritmo y luz. Gratis cada día — sin cuenta."
+      cta: "Descarga gratis"
+    ad_copy:
+      primary_text: "¿Amaneciste con la mente cargada? Una caminata guiada al amanecer, gratis cada día. Sin cuenta."
+      headline: "Camina antes del ruido"
+      description: "Un comienzo más calmado."

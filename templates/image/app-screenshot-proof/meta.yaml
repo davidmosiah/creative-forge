@@ -1,0 +1,20 @@
+name: app-screenshot-proof
+observed_angle: "real product UI + explicit mechanism + CTA"
+swipe_angles: [pain-to-peace, belief-through-proof]
+best_for: "cold acquisition where the product mechanism is visually differentiated and must remain readable"
+swipe_sources: ["StrideCo (fictional)"]
+uses_mascot: false
+needs_bg_photo: true
+rules:
+  - "Use only owned or cleared real product screenshots."
+  - "Keep the product UI and the promise in separate visual regions."
+  - "Do not imply that the screenshot itself proves an outcome."
+copy_fields:
+  kicker: "short mechanism label"
+  headline: "first line of the promise"
+  headline_accent: "second line in brand accent"
+  cta: "download or trial CTA"
+limits: {kicker: 30, headline: 24, headline_accent: 26, cta: 18}
+formats: [square, portrait, story, landscape]
+safe_zones:
+  story: {top: 250, bottom: 320}

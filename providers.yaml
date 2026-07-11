@@ -1,0 +1,64 @@
+version: 1
+research:
+  meta_ad_library:
+    preferred: meta_ads_mcp
+    fallbacks: [browser]
+    output_contract: swipe/<app>/competitors.yaml
+image:
+  html_chrome:
+    status: production
+  higgsfield:
+    preferred: higgsfield_mcp
+    fallbacks: [higgsfield_cli]
+    cli: scripts/higgsfield.sh
+video:
+  remotion:
+    preferred: local_cli
+    version: 4.0.487
+    status: production_local
+    local_render_ready: true
+    verified_formats: [story, portrait, square]
+    max_concurrency: 1
+    proof:
+      app: sunrise-demo
+      recipe: morning-ritual
+      locale: pt-BR
+      verified_at: "2026-07-10"
+      gates: [typecheck, real_render, render_receipt, ffprobe_ffmpeg, agent_playback_receipt]
+    localized_voiceover_and_rendered_captions: supported_with_rights_cleared_assets
+    meta_publish_ready: false
+  higgsfield:
+    adapter: scripts/higgsfield_video.py
+    cli_version_verified: 1.1.10
+    status: estimate_only_paid_generation_blocked
+    spend_contract: unavailable_without_provider_enforced_cap_and_actual_cost_reconciliation
+    commercial_ads_ready: false
+    note: "The adapter may discover schemas and estimate cost, but create is blocked before any provider call. Commercial use would additionally require a hashed license/terms record and paid-ad/platform scope."
+analytics:
+  posthog:
+    preferred: posthog_mcp
+    output_contract: signals/<app>.yaml
+publish:
+  meta_ads:
+    provider: meta_ads_mcp
+    required_tools: [ads_create_creative, ads_create_ad]
+    required_readback_tool: discovered_at_runtime_and_distinct_from_create
+    capability_receipt_max_age_minutes: 60
+    destination_readiness_receipt_max_age_minutes: 60
+    paused_readback_receipt_max_age_minutes: 60
+    paused_readback_envelope: creative-forge/meta-ad-readback@1
+    metrics_source_envelope: creative-forge/meta-insights-readback@1
+    local_receipt_validation_is_provider_proof: false
+    requested_status: PAUSED
+    activation_allowed: false
+    audience_plan_contract: audiences/<app>.yaml
+    known_gaps:
+      image_upload: >
+        The official Meta Ads MCP has no image-upload tool; ads_create_creative
+        needs a public image_url or a pre-uploaded image_hash. Host approved
+        PNGs (e.g. the app site's /ads/ folder) at publish time — the receipt
+        stays bound to the QA sha256.
+      video_publish: >
+        Local Remotion output does not prove a Meta upload path. Video stays
+        fail-closed until runtime discovery proves upload, processing status,
+        creative/ad creation and exact PAUSED readback for the same hash.

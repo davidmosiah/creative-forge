@@ -1,0 +1,25 @@
+version: 1
+app: sunrise-demo
+assets:
+  - id: sunrise-icon
+    kind: owned
+    path: assets/sunrise-demo/icon.png
+    sha256: c4d00937b372ef2f74b2974399ea78a92784466dce14024c49711ccb6beba3c6
+    source: { kind: fictional_demo }
+    rights:
+      status: cleared
+      commercial_use: true
+      derivative_use: true
+      basis: owned_by_app
+      scope: {paid_ads: true, platforms: [meta]}
+  - id: sunrise-sun-mascot
+    kind: owned
+    path: assets/sunrise-demo/sun.svg
+    sha256: 237eba9eea4095da91cb229b357e755e6b99ea12321a25fb3b62564e72fbd164
+    source: { kind: fictional_demo }
+    rights:
+      status: cleared
+      commercial_use: true
+      derivative_use: true
+      basis: owned_by_app
+      scope: {paid_ads: true, platforms: [meta]}

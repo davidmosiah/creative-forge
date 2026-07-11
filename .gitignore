@@ -1,0 +1,31 @@
+# generated creatives — regenerate from recipes, don't version binaries
+output/
+qa/**
+!qa/.gitkeep
+runs/**
+!runs/.gitkeep
+publish/**
+!publish/.gitkeep
+capabilities.json
+
+# local legal evidence may contain contracts or personal signatures; registries
+# store only paths + hashes and QA receipts seal the local bytes.
+assets/*/rights/**
+
+# never commit secrets (Higgsfield/Meta tokens live in the shell env)
+.env
+.env.*
+secrets.*
+*-token.txt
+
+# python / node / macOS cruft
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+.cache/
+.remotion/
+out/
+.DS_Store
+*.log

@@ -1,0 +1,20 @@
+name: review-quote
+observed_angle: "social proof — a real 5★ review as the whole creative"
+# no social-proof pattern mined yet → recipes using this template stay blocked
+# until one exists in swipe/<app>/competitors.yaml (by design)
+swipe_angles: [social-proof]
+best_for: "warm/retargeting; overcoming skepticism; cheap to produce, converts"
+swipe_sources: [CalmStride, DawnFit]
+uses_mascot: false
+requires_evidence: app_store_review
+rules:
+  - "Use REAL App Store / Play Store reviews only. Never fabricate testimonials."
+  - "Quote verbatim (light trim ok). Keep attribution honest (e.g. 'App Store review')."
+copy_fields:
+  quote: "the review text, trimmed to ~140 chars, kept truthful"
+  attribution: "who said it (e.g. '— Avaliação na App Store')"
+  cta: "download pill label"
+limits: { quote: 150, attribution: 40, cta: 18 }
+formats: [square, portrait, story]
+safe_zones:
+  story: { top: 250, bottom: 320 }

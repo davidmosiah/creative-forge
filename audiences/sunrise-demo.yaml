@@ -1,0 +1,33 @@
+# FICTIONAL demo audience plan — placeholder shapes for the real policy.
+version: 1
+app: sunrise-demo
+updated_at: "2026-07-11"
+policy:
+  allow_interest_targeting: false
+  special_ad_categories: []
+audiences:
+  - id: us-cold-broad
+    market: us
+    funnel_stage: cold
+    hypothesis: >
+      Broad US morning-wellness audience discovers the walk through the
+      creative itself; no interest stacking.
+    targeting:
+      kind: broad
+      countries: [US]
+      advantage_audience: true
+      age_min: 18
+    optimization_event: app_install
+    data_source:
+      kind: fictional_demo
+      ref: signals/sunrise-demo.yaml
+      observed_at: "2026-07-11T00:00:00Z"
+    creatives:
+      copy_language: en
+    confidence: low
+    confidence_rationale: >
+      Fictional demo data — replace with a real evidence-backed plan.
+    exclusions: []
+    status: approved
+    approved_by: demo-operator
+    approved_at: "2026-07-11"

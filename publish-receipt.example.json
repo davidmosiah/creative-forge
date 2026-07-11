@@ -1,0 +1,24 @@
+{
+  "manifest_digest": "replace-with-exact-manifest-digest",
+  "provider": "meta_ads_mcp",
+  "verification_basis": "live_provider_readback",
+  "local_validation_sufficient": false,
+  "delivery_status": "PAUSED",
+  "items": [
+    {
+      "item_key": "manifest-item-key",
+      "provider": "meta_ads_mcp",
+      "tool": "replace-with-manifest-readback-tool",
+      "account_id": "act_exact-id",
+      "campaign_id": "exact-campaign-id",
+      "ad_set_id": "exact-ad-set-id",
+      "creative_id": "returned-creative-id",
+      "ad_id": "returned-ad-id",
+      "artifact_sha256": "exact-manifest-item-sha256",
+      "status": "PAUSED",
+      "observed_at": "YYYY-MM-DDTHH:MM:SSZ",
+      "response_path": "runs/live-readbacks/meta-paused-manifest-item-key.json",
+      "response_digest": "sha256-of-the-canonical-publish-readback-envelope"
+    }
+  ]
+}

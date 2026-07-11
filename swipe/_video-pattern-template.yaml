@@ -1,0 +1,71 @@
+# Agent-authored video mining contract. The script validates only provenance,
+# rights, identity, locale and timing mechanics; it never grades the creative
+# judgment written under structure/agent_judgment.
+version: 1
+app: __APP_SLUG__
+observed_at: "YYYY-MM-DDTHH:MM:SSZ"
+expires_at: "YYYY-MM-DDTHH:MM:SSZ"
+patterns:
+  # Browser mode stores derived observations only. source_url must use an
+  # official domain coherent with platform (for example facebook.com for meta,
+  # tiktok.com for tiktok, google.com/youtube.com for google). Never add a local path,
+  # downloaded frame, thumbnail, competitor asset hash or reuse permission.
+  - id: browser-__SOURCE_ID__
+    mode: browser_observation
+    platform: meta
+    advertiser: __ADVERTISER__
+    source_url: "https://www.facebook.com/ads/library/?id=__SOURCE_ID__"
+    lineage: competitor_pattern
+    locale: en
+    copy_language: en
+    rights:
+      class: reference_only
+      media_reuse: false
+      allowed_uses: [structural_analysis]
+    media:
+      format: square
+      duration_seconds: 15.0
+    structure:
+      hook: __AGENT_DERIVED_HOOK__
+      body: __AGENT_DERIVED_BODY__
+      cta: __AGENT_DERIVED_CTA_OR_EXPLICIT_UNKNOWN__
+      agent_judgment: __WHY_THIS_PATTERN_MATTERS__
+
+  # Licensed mode requires an existing local file, its real sha256 and a
+  # verifiable rights receipt. FFprobe/contact sheets are opt-in and never
+  # promote the source into a production asset automatically.
+  - id: licensed-__ASSET_ID__
+    mode: licensed_file
+    platform: local
+    advertiser: __RIGHTS_HOLDER__
+    source_url: "https://example.com/source-provenance"
+    lineage: exploratory
+    locale: pt-BR
+    copy_language: pt
+    rights:
+      class: licensed # owned | commissioned | licensed | generated | public_domain
+      status: verified
+      evidence:
+        kind: license_receipt
+        path: "path/to/license-receipt.txt"
+      allowed_uses: [analysis, contact_sheet]
+    media:
+      path: "path/to/licensed-source.mp4"
+      sha256: __REAL_SHA256__
+      format: story
+      duration_seconds: 15.0
+    structure:
+      timeline:
+        - start_seconds: 0.0
+          end_seconds: 3.0
+          beat: hook
+          derived_fact: __AGENT_OBSERVATION__
+        - start_seconds: 3.0
+          end_seconds: 12.0
+          beat: body
+          derived_fact: __AGENT_OBSERVATION__
+        - start_seconds: 12.0
+          end_seconds: 15.0
+          beat: cta
+          derived_fact: __AGENT_OBSERVATION__
+      agent_judgment: __WHY_THIS_PATTERN_MATTERS__

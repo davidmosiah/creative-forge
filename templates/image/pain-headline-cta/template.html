@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<!--
+  TEMPLATE: pain-headline-cta
+  Observed pattern: pain → relief. A tension line up top ("woke up anxious?"),
+  the hero mascot, a serif promise, a soft sub, and a download pill.
+  All sizing is in vmin so the SAME layout scales across square/portrait/story
+  (width is always 1080; extra height just breathes via space-between).
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; }
+  .ad {
+    position: fixed; inset: 0; overflow: hidden;
+    font-family: {{ fonts.body }};
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: space-between; text-align: center;
+    padding: 7.4vmin 5.8vmin;
+    background:
+      radial-gradient(80% 40% at 50% 26%, {{ palette.glow }} 0%, transparent 62%),
+      radial-gradient(90% 55% at 85% 6%, {{ palette.halo_blue }} 0%, transparent 55%),
+      radial-gradient(90% 55% at 12% 10%, {{ palette.halo_gold }} 0%, transparent 55%),
+      linear-gradient(170deg, {{ palette.bg_top }} 0%, {{ palette.bg_mid }} 46%, {{ palette.bg_bottom }} 100%);
+  }
+  .pain {
+    font-size: 3.7vmin; font-weight: 700; letter-spacing: .3px;
+    color: {{ palette.accent_soft }}; text-transform: uppercase;
+  }
+  .middle { display: flex; flex-direction: column; align-items: center; gap: 3vmin; }
+  .mascot { width: 34vmin; height: 34vmin; }
+  .mascot svg { width: 100%; height: 100%; overflow: visible; }
+  .headline {
+    font-family: {{ fonts.headline }}; font-weight: 600; font-size: 6.9vmin;
+    line-height: 1.06; letter-spacing: -.09vmin; color: {{ palette.ink }};
+  }
+  .headline b { color: {{ palette.accent }}; }
+  .sub {
+    margin-top: 2.4vmin; font-size: 3.35vmin; line-height: 1.4;
+    color: {{ palette.ink_soft }}; font-weight: 500;
+    max-width: 80%; margin-left: auto; margin-right: auto;
+  }
+  .foot { display: flex; align-items: center; justify-content: center; gap: 1.9vmin; }
+  .foot img { width: 7vmin; height: 7vmin; border-radius: 1.7vmin; box-shadow: 0 .7vmin 2vmin -.7vmin rgba(111,62,36,.5); }
+  .foot .brand { font-size: 3.7vmin; font-weight: 800; color: {{ palette.ink }}; }
+  .pill {
+    margin-left: .6vmin; background: {{ palette.accent }}; color: {{ palette.on_accent }};
+    font-weight: 700; font-size: 2.8vmin; padding: 1.3vmin 2.4vmin; border-radius: 999px;
+  }
+  @media (max-aspect-ratio: 10/16) {
+    .ad { padding-top: 250px; padding-bottom: 320px; }
+  }
+</style>
+</head>
+<body>
+  <div class="ad">
+    <div class="pain">{{ copy.pain }}</div>
+    <div class="middle">
+      <div class="mascot">{{{ mascot_svg_inline }}}</div>
+      <div>
+        <div class="headline">{{ copy.headline }}<br><b>{{ copy.headline_accent }}</b></div>
+        <div class="sub">{{ copy.sub }}</div>
+      </div>
+    </div>
+    <div class="foot">
+      <img src="{{ icon_url }}" alt="">
+      <span class="brand">{{ name }}</span>
+      <span class="pill">{{ copy.cta }}</span>
+    </div>
+  </div>
+</body>
+</html>

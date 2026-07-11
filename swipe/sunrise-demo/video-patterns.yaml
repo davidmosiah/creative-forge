@@ -1,0 +1,43 @@
+# FICTIONAL video pattern for the demo. Real entries come from actually
+# watching a public ad in the Ad Library and writing a derived beat timeline;
+# competitor media is never downloaded or reused.
+version: 1
+app: sunrise-demo
+observed_at: "2026-07-01T00:00:00Z"
+observed_at_precision: day
+expires_at: "2027-12-31T23:59:59Z"
+patterns:
+  - id: demo-0000000000000003
+    mode: browser_observation
+    platform: meta
+    advertiser: "DawnFit (fictional)"
+    source_url: "https://www.facebook.com/ads/library/?id=0000000000000003"
+    lineage: competitor_pattern
+    evidence_level: observed
+    performance_status: unverified
+    market: US
+    active_since: "2026-01-01"
+    active_since_basis: ad_library_displayed_start_date
+    locale: en
+    copy_language: en
+    rights:
+      class: reference_only
+      media_reuse: false
+      allowed_uses: [structural_analysis]
+    media:
+      format: story
+      aspect_ratio: "9:16"
+      duration_seconds: 15.0
+      active_at_observation: true
+    structure:
+      hook: >-
+        FICTIONAL: opens on a tense morning face, then the first step outside.
+      body: >-
+        FICTIONAL: connects the guided walk to a visibly calmer pace.
+      cta: >-
+        FICTIONAL: download-free pill over the sunrise.
+      agent_judgment: >-
+        Fictional structural reference shipped so the demo video pipeline can
+        run end to end. Replace with a real observation.
+      known_limits:
+        - Entirely fictional; no real ad was observed.

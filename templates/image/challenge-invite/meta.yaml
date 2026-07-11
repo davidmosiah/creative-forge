@@ -1,0 +1,21 @@
+name: challenge-invite
+observed_angle: "definite-timeframe spiritual challenge invite (join N days of practice)"
+# observed competitor-pattern angles this template materializes (normalized
+# against swipe/<app>/competitors.yaml; this is lineage, never proof of ROAS)
+swipe_angles: [21-day challenge]
+best_for: "cold/warm commitment framing; converts intent into a concrete start date"
+swipe_sources: [StrideCo]
+uses_mascot: true
+copy_fields:
+  kicker: "short dare line, UPPERCASE-friendly, ends with '?' (max ~40 chars)"
+  number: "the challenge duration as a bare number (e.g. '21')"
+  unit: "what the number counts, serif line under it (e.g. 'manhãs caminhando')"
+  promise: "one serif line of transformation (max ~34 chars)"
+  sub: "what happens daily + what's free (max ~125 chars)"
+  cta: "download pill label (e.g. 'Baixe grátis')"
+# hard char limits enforced by validate.py (counts that fit the layout)
+limits: { kicker: 40, number: 4, unit: 30, promise: 34, sub: 125, cta: 18 }
+# formats this template renders well in (dense → vertical only)
+formats: [square, portrait, story]
+safe_zones:
+  story: { top: 250, bottom: 320 }

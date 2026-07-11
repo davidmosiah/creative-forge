@@ -1,0 +1,130 @@
+# Sunrise Walks — FICTIONAL demo app that ships with creative-forge so the
+# whole pipeline runs end-to-end without any real product or real research.
+slug: sunrise-demo
+name: Sunrise Walks
+tagline: "A guided walk before the world wakes up"
+default_lang: en-US
+
+store:
+  ios_id: "0000000000"
+  ios_url: "https://apps.apple.com/app/id0000000000"
+
+readiness:
+  status: needs_live_verification
+  required_receipts:
+    app_store_destination: pending_live_check
+    meta_app_events: pending_live_check
+    attribution_mapping: pending_live_check
+    meta_video_publish: blocked_missing_capability
+
+destinations:
+  default:
+    type: app_store
+    url: "https://apps.apple.com/app/id0000000000"
+    status: configured
+  custom_product_pages: []
+
+event_map:
+  install: {event_name: null, status: unverified}
+  first_value: {event_name: null, status: aggregate_only_in_signals}
+  trial_start: {event_name: null, status: aggregate_only_in_signals}
+  purchase: {event_name: null, status: aggregate_only_in_signals}
+
+policy:
+  sensitive_context: none
+  allow_sensitive_interest_targeting: false
+  generative_media_requires_receipt: true
+  activation_budget_spend: explicit_human_confirmation
+
+assets:
+  icon: assets/sunrise-demo/icon.png
+  mascot_svg: assets/sunrise-demo/sun.svg
+
+palette:
+  bg_top: "#dff1ff"
+  bg_mid: "#ffe9c9"
+  bg_bottom: "#ffd39a"
+  glow: "#fff3d6"
+  halo_blue: "rgba(120,170,255,0.5)"
+  halo_gold: "rgba(255,170,90,0.5)"
+  ink: "#2c2419"
+  ink_soft: "#5d4c37"
+  accent: "#c65a1e"
+  accent_soft: "#a8794a"
+  on_accent: "#fff3d6"
+
+fonts:
+  headline: 'Georgia, "Times New Roman", serif'
+  body: '-apple-system, "Segoe UI", Roboto, sans-serif'
+
+competitors:
+  - name: StrideCo (fictional)
+    angle: "pain-to-peace morning walk framing"
+  - name: DawnFit (fictional)
+    angle: "definite-timeframe walking challenge"
+
+voice:
+  tone: "warm, unhurried, encouraging — a walking friend, never a drill sergeant"
+  anchors:
+    en: [sunrise, walk, morning, breath, calm, free, "no account", guided]
+    es: [amanecer, caminata, mañana, respiro, calma, gratis, "sin cuenta", guiada]
+  banned:
+    global: ["#1", "100%"]
+    en: ["number one", "best app", revolutionary, miracle, guaranteed, urgent, "must-have"]
+    es: ["número 1", "mejor app", revolucionario, milagro, garantizado, urgente, imperdible]
+  approved_ctas:
+    en: ["Download free", "Start free", "Start your day", "Try it today"]
+    es: ["Descarga gratis", "Empieza gratis", "Empieza tu día", "Pruébala hoy"]
+
+claims:
+  daily_walk:
+    evidence: { kind: repo, path: "docs/demo/PRODUCT.md", verified_at: "2026-07-11" }
+  daily_free:
+    evidence: { kind: repo, path: "docs/demo/PRODUCT.md", verified_at: "2026-07-11" }
+  no_account:
+    evidence: { kind: repo, path: "docs/demo/PRODUCT.md", verified_at: "2026-07-11" }
+
+publish:
+  primary_format: portrait
+  max_ads_per_ad_set: 6
+  asset_hosting:
+    method: static_site_dir
+    site_dir: docs/demo/site
+    public_subdir: ads
+    base_url: https://example.com
+
+testing_policy:
+  decision_mode: agent_recommendation_only
+  external_action_authorization: explicit_human_confirmation
+  test_budget_daily_minor_usd: 1000
+  default_observation_window_hours: 72
+  default_attribution_window: {click_days: 7, view_days: 1}
+  currency: USD
+  operator_guardrails:
+    min_impressions_for_ctr_context: 2000
+    low_ctr_context: 0.008
+    max_cold_frequency_context: 2.5
+    no_install_spend_multiple_of_target_cpi: 3
+  scaling_context:
+    max_step_ratio: 0.30
+    min_days_between_recommendations: 2
+  planning_heuristic: "up to 3 themes x 2 variants within the six-ad operator cap"
+
+locales:
+  fallback_copy_language: en
+  copy_languages: [en, es]
+  require_native_market_copy: true
+  app_resource_paths:
+    - "docs/demo/app-resources"
+  storefront_metadata_path: "docs/demo/fastlane-metadata"
+  markets:
+    - id: us
+      countries: [US]
+      storefront_locale: en-US
+      app_locale: en
+      copy_language: en
+    - id: mexico
+      countries: [MX]
+      storefront_locale: es-MX
+      app_locale: es
+      copy_language: es

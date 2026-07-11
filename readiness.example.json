@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "app": "app-slug",
+  "receipts": [
+    {
+      "receipt_type": "app_store_destination",
+      "provider": "app_store_connect_api",
+      "tool": "replace-with-real-live-read-tool",
+      "app": "app-slug",
+      "status": "ready",
+      "verification_basis": "live_provider_readback",
+      "local_validation_sufficient": false,
+      "observed_at": "YYYY-MM-DDTHH:MM:SSZ",
+      "response_path": "runs/live-readbacks/app-store-destination.json",
+      "response_digest": "replace-with-sha256-of-the-raw-provider-response",
+      "destination": {
+        "ref": "default",
+        "type": "app_store",
+        "url": "https://apps.apple.com/app/id0000000000"
+      }
+    },
+    {
+      "receipt_type": "meta_app_events",
+      "provider": "meta_ads_mcp",
+      "tool": "replace-with-real-events-read-tool",
+      "app": "app-slug",
+      "status": "ready",
+      "verification_basis": "live_provider_readback",
+      "local_validation_sufficient": false,
+      "observed_at": "YYYY-MM-DDTHH:MM:SSZ",
+      "response_path": "runs/live-readbacks/meta-app-events.json",
+      "response_digest": "replace-with-sha256-of-the-raw-provider-response"
+    },
+    {
+      "receipt_type": "attribution_mapping",
+      "provider": "replace-with-real-attribution-provider",
+      "tool": "replace-with-real-attribution-read-tool",
+      "app": "app-slug",
+      "status": "ready",
+      "verification_basis": "live_provider_readback",
+      "local_validation_sufficient": false,
+      "observed_at": "YYYY-MM-DDTHH:MM:SSZ",
+      "response_path": "runs/live-readbacks/attribution-mapping.json",
+      "response_digest": "replace-with-sha256-of-the-raw-provider-response"
+    }
+  ]
+}

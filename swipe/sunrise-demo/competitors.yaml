@@ -1,0 +1,57 @@
+# FICTIONAL research for the demo app. In a real app every entry must come
+# from actual Ad Library observation with a real source_url. These entries
+# use evidence_level "observed" only to satisfy the schema; the notes state
+# clearly that they are invented for the demo.
+version: 1
+app: sunrise-demo
+observed_at: "2026-07-11T00:00:00Z"
+expires_at: "2027-12-31T23:59:59Z"
+creatives:
+  - id: demo-0000000000000001
+    platform: meta
+    advertiser: "StrideCo (fictional)"
+    market: US
+    active_since: "2026-01-01"
+    format: unknown
+    angle: pain-to-peace
+    hook: "Woke up tense? A 20-minute sunrise walk resets the day"
+    source_url: "https://example.com/fictional-ad-1"
+    evidence_level: observed
+    lineage: competitor_pattern
+    performance_status: unverified
+    observation_notes: >-
+      FICTIONAL example shipped with creative-forge so the demo pipeline can
+      run. Not a real ad. Replace with real Ad Library research.
+  - id: demo-0000000000000002
+    platform: meta
+    advertiser: "DawnFit (fictional)"
+    market: US
+    active_since: "2026-01-01"
+    format: unknown
+    angle: 21-day challenge
+    hook: "21 sunrises. One calmer you."
+    source_url: "https://example.com/fictional-ad-2"
+    evidence_level: observed
+    lineage: competitor_pattern
+    performance_status: unverified
+    observation_notes: >-
+      FICTIONAL example shipped with creative-forge so the demo pipeline can
+      run. Not a real ad. Replace with real Ad Library research.
+  - id: demo-0000000000000003
+    platform: meta
+    advertiser: "DawnFit (fictional)"
+    market: US
+    active_since: "2026-01-01"
+    active_since_basis: ad_library_displayed_start_date
+    format: video
+    aspect_ratio: "9:16"
+    duration_seconds: 15.0
+    angle: pain-to-peace
+    hook: "FICTIONAL video: tense morning face, first step outside, calmer pace"
+    source_url: "https://www.facebook.com/ads/library/?id=0000000000000003"
+    evidence_level: observed
+    lineage: competitor_pattern
+    performance_status: unverified
+    observation_notes: >-
+      FICTIONAL example shipped with creative-forge so the demo video
+      pipeline can run. Not a real ad.

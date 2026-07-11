@@ -1,0 +1,20 @@
+name: pain-headline-cta
+observed_angle: "pain → relief (woke up anxious / tired / rushed → 5 calm minutes)"
+# observed competitor-pattern angles this template materializes (normalized
+# against swipe/<app>/competitors.yaml; this is lineage, never proof of ROAS)
+swipe_angles: [pain-to-peace, sleep, family-intercession]
+best_for: "cold top-of-funnel; the highest-intent hook in the wellness niche"
+swipe_sources: [StrideCo, DawnFit, CalmStride]
+uses_mascot: true
+copy_fields:
+  pain: "short tension line, UPPERCASE-friendly, ends with '?' (max ~40 chars)"
+  headline: "first line of the serif promise"
+  headline_accent: "second line, rendered in accent color/bold"
+  sub: "one sentence of relief + what's free (max ~120 chars)"
+  cta: "download pill label (e.g. 'Baixe grátis')"
+# hard char limits enforced by validate.py (counts that fit the layout)
+limits: { pain: 40, headline: 24, headline_accent: 28, sub: 125, cta: 18 }
+# formats this template renders well in (dense → vertical only)
+formats: [square, portrait, story]
+safe_zones:
+  story: { top: 250, bottom: 320 }

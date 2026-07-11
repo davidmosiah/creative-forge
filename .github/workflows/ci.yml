@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 10 * * *"
+
+jobs:
+  tests:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: remotion/package-lock.json
+      - run: pip install -r requirements.txt
+      - run: python3 -m unittest discover -s tests -v
+      - run: python3 -m compileall -q scripts tests
+      - name: Parse YAML
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+          for path in Path('.').rglob('*.yaml'):
+              if 'output' not in path.parts:
+                  yaml.safe_load(path.read_text())
+          print('yaml=PASS')
+          PY
+      - name: Install pinned Remotion workspace
+        working-directory: remotion
+        run: npm ci --ignore-scripts
+      - name: Typecheck Remotion
+        working-directory: remotion
+        run: npm run typecheck
+      - name: Audit agent-authored video contracts
+        run: |
+          python3 scripts/forge.py preflight --app sunrise-demo
+          python3 scripts/video_mining.py --app sunrise-demo --json
+          python3 scripts/video.py audit-recipe --app sunrise-demo --recipe morning-ritual
+      - name: Materialize real Sunrise Walks video props without browser or render
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from scripts import render, video
+
+          root = Path.cwd()
+          app = render.load_yaml(root / "apps/sunrise-demo.yaml")
+          recipe = render.load_yaml(root / "recipes/sunrise-demo/video/morning-ritual.yaml")
+          props = video.build_props(recipe, app, "br", root=root)
+          assert props["app"]["slug"] == "sunrise-demo"
+          assert props["marketId"] == "br"
+          assert props["locale"] == "pt-BR"
+          assert props["durationInFrames"] == 450
+          assert len(props["scenes"]) == 3
+          print("sunrise-demo_video_props=PASS")
+          PY
+      - name: Ensure FFmpeg for production-local video proof
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+      - name: Render and prepare sealed Sunrise Walks playback QA
+        run: |
+          python3 scripts/forge.py build-video \
+            --app sunrise-demo \
+            --recipe morning-ritual \
+            --locale pt-BR \
+            --batch-id ci-video-proof
+          python3 scripts/video_qa.py status \
+            --report qa/sunrise-demo/ci-video-proof/pt-BR/morning-ritual/playback-report.json
