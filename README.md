@@ -10,11 +10,12 @@
 </h3>
 
 <p align="center">
+  <a href="https://pypi.org/project/creative-forge/"><img src="https://img.shields.io/pypi/v/creative-forge?style=for-the-badge&labelColor=0F172A&color=10B981&logo=pypi&logoColor=white" alt="PyPI version" /></a>
+  <a href="https://github.com/davidmosiah/creative-forge/releases/latest"><img src="https://img.shields.io/github/v/release/davidmosiah/creative-forge?style=for-the-badge&labelColor=0F172A&color=2563EB&logo=github" alt="GitHub release" /></a>
+  <a href="https://github.com/davidmosiah/creative-forge/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/davidmosiah/creative-forge/ci.yml?branch=main&style=for-the-badge&labelColor=0F172A&label=CI" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-AGPL--3.0-22C55E?style=for-the-badge&labelColor=0F172A" alt="License AGPL-3.0" /></a>
   <a href="#-quality-bar"><img src="https://img.shields.io/badge/TESTS-284_passing-16A34A?style=for-the-badge&labelColor=0F172A" alt="284 tests" /></a>
-  <a href="#-see-it-run"><img src="https://img.shields.io/badge/DEMO-runs_out_of_the_box-F59E0B?style=for-the-badge&labelColor=0F172A" alt="Demo included" /></a>
   <a href="https://www.remotion.dev"><img src="https://img.shields.io/badge/VIDEO-Remotion-7C3AED?style=for-the-badge&labelColor=0F172A" alt="Remotion video" /></a>
-  <img src="https://img.shields.io/badge/BUILT_FOR-AI_agents-0EA5A3?style=for-the-badge&labelColor=0F172A" alt="Built for AI agents" />
 </p>
 
 <p align="center">
@@ -51,6 +52,29 @@ That's the **actual QA contact sheet** the demo produces on a fresh clone: one c
 
 ## 🚀 Quick start
 
+### Install from PyPI
+
+```bash
+pip install creative-forge
+
+# Demo workspace is bundled in the wheel — no clone required for image preflight/build
+creative-forge preflight --app sunrise-demo
+creative-forge build --app sunrise-demo --batch-id demo-001 --jobs 2
+```
+
+Prefer a checkout? Clone the repo (needed for Remotion video) and either work
+from the tree or point the CLI at it:
+
+```bash
+git clone https://github.com/davidmosiah/creative-forge.git
+cd creative-forge
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .
+# optional: export CREATIVE_FORGE_ROOT="$PWD"
+```
+
+### From a fresh clone (full video stack)
+
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
@@ -76,6 +100,8 @@ python3 scripts/forge.py build-video --app sunrise-demo \
 
 `sunrise-demo` is a **fictional product with fictional research** so the whole
 pipeline runs end to end with zero real data. Every fictional file says so.
+
+See also: [CHANGELOG.md](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
 ---
 

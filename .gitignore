@@ -23,9 +23,11 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.venv-build/
 node_modules/
 .cache/
 .remotion/
 out/
 .DS_Store
 *.log
+dist/

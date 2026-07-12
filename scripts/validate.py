@@ -22,7 +22,7 @@ except ImportError:
     import paths
     import render
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = paths.default_root()
 ALL_FORMATS = ["square", "portrait", "story", "landscape"]
 
 

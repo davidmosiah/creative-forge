@@ -15,7 +15,12 @@ try:
 except ImportError:  # direct execution: python3 scripts/experiments.py
     import publish
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from scripts.paths import default_root
+except ImportError:
+    from paths import default_root
+
+ROOT = default_root()
 METRIC_FIELDS = (
     "impressions",
     "clicks",

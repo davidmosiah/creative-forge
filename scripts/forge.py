@@ -25,7 +25,12 @@ except ImportError:
     import video_mining
     import video_qa
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from scripts.paths import default_root
+except ImportError:
+    from paths import default_root
+
+ROOT = default_root()
 
 
 def aggregate_gates(gates: list) -> dict:

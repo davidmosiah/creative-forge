@@ -26,7 +26,12 @@ DESTINATION_RECEIPT_TYPES = {
     "custom_product_page_destination",
     "landing_page_destination",
 }
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from scripts.paths import default_root
+except ImportError:
+    from paths import default_root
+
+ROOT = default_root()
 MAX_RAW_RESPONSE_BYTES = 64 * 1024 * 1024
 PUBLISH_READBACK_SCHEMA = "creative-forge/meta-ad-readback@1"
 PUBLISH_READBACK_FIELDS = {
@@ -962,7 +967,7 @@ def main() -> None:
         capabilities = json.loads(Path(args.capabilities).read_text())
         readiness_receipt = json.loads(Path(args.readiness_receipt).read_text())
         app_slug = report.get("app")
-        root = Path(__file__).resolve().parent.parent
+        root = default_root()
         plan_path = root / "audiences" / f"{app_slug}.yaml"
         try:
             if not plan_path.exists():

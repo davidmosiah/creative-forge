@@ -1,0 +1,103 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "creative-forge"
+version = "0.1.0"
+description = "Agent-driven paid-creative workflow with fail-closed receipts: research → brief → localized creatives → sealed QA → PAUSED-only publishing."
+readme = "README.md"
+license = "AGPL-3.0-only"
+requires-python = ">=3.11"
+authors = [
+  { name = "David Batista", email = "support@delx.ai" },
+]
+keywords = [
+  "ai-agents",
+  "advertising",
+  "creative-automation",
+  "meta-ads",
+  "remotion",
+  "fail-closed",
+  "indie-hacker",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU Affero General Public License v3",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Graphics",
+  "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+  "PyYAML>=6.0",
+  "Pillow>=10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/davidmosiah/creative-forge"
+Repository = "https://github.com/davidmosiah/creative-forge"
+Issues = "https://github.com/davidmosiah/creative-forge/issues"
+Changelog = "https://github.com/davidmosiah/creative-forge/blob/main/CHANGELOG.md"
+
+[project.scripts]
+creative-forge = "scripts.forge:main"
+forge = "scripts.forge:main"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "scripts",
+  "apps",
+  "recipes",
+  "templates",
+  "swipe",
+  "assets",
+  "audiences",
+  "briefs",
+  "signals",
+  "skill",
+  "providers.yaml",
+  "capabilities.example.json",
+  "readiness.example.json",
+  "metrics-source.example.json",
+  "publish-receipt.example.json",
+  "publish-readback-envelope.example.json",
+  "LICENSE",
+  "README.md",
+  "CHANGELOG.md",
+  "CONTRIBUTING.md",
+  "SECURITY.md",
+  "PLAYBOOK.md",
+  "requirements.txt",
+  "tests",
+  "docs",
+  "remotion/package.json",
+  "remotion/package-lock.json",
+  "remotion/tsconfig.json",
+  "remotion/src",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"apps" = "scripts/workspace/apps"
+"recipes" = "scripts/workspace/recipes"
+"templates" = "scripts/workspace/templates"
+"swipe" = "scripts/workspace/swipe"
+"assets" = "scripts/workspace/assets"
+"audiences" = "scripts/workspace/audiences"
+"briefs" = "scripts/workspace/briefs"
+"signals" = "scripts/workspace/signals"
+"skill" = "scripts/workspace/skill"
+"docs/demo" = "scripts/workspace/docs/demo"
+"providers.yaml" = "scripts/workspace/providers.yaml"
+"capabilities.example.json" = "scripts/workspace/capabilities.example.json"
+"readiness.example.json" = "scripts/workspace/readiness.example.json"
+"metrics-source.example.json" = "scripts/workspace/metrics-source.example.json"
+"publish-receipt.example.json" = "scripts/workspace/publish-receipt.example.json"
+"publish-readback-envelope.example.json" = "scripts/workspace/publish-readback-envelope.example.json"

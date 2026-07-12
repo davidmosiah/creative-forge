@@ -24,7 +24,12 @@ try:
 except ImportError:  # direct execution: python3 scripts/video_mining.py
     import research
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from scripts.paths import default_root
+except ImportError:
+    from paths import default_root
+
+ROOT = default_root()
 ALLOWED_MODES = {"browser_observation", "licensed_file"}
 ALLOWED_MEDIA_FORMATS = {"square", "portrait", "story", "landscape"}
 LICENSED_RIGHTS_CLASSES = {

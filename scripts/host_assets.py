@@ -30,7 +30,12 @@ try:
 except ImportError:  # direct execution: python3 scripts/host_assets.py
     import qa
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from scripts.paths import default_root
+except ImportError:
+    from paths import default_root
+
+ROOT = default_root()
 HOSTING_SCHEMA = "creative-forge/asset-hosting@1"
 HOSTING_VERIFICATION_SCHEMA = "creative-forge/asset-hosting-verification@1"
 FETCH_TIMEOUT_SECONDS = 30

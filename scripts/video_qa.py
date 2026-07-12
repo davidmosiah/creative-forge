@@ -18,7 +18,7 @@ except ImportError:
     import paths as workspace_paths
     import video
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = workspace_paths.default_root()
 
 PLAYBACK_CHECKS = (
     "full_timeline",

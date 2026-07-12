@@ -18,7 +18,7 @@ try:
 except ImportError:
     import paths
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = paths.default_root()
 
 
 def die(m: str) -> None:

@@ -26,7 +26,12 @@ except ImportError:
     import video_mining
 
 
-ROOT = Path(__file__).resolve().parent.parent
+try:
+    from scripts.paths import default_root
+except ImportError:
+    from paths import default_root
+
+ROOT = default_root()
 FPS = 30
 SAMPLE_RATE = 44_100
 RENDER_TIMEOUT_SECONDS = 20 * 60
