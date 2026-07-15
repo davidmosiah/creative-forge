@@ -24,10 +24,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import html as html_lib
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+from PIL import Image
 
 try:
     from scripts.paths import default_root
@@ -49,6 +53,17 @@ def normalize_jobs(value: int) -> int:
     if jobs < 1 or jobs > 8:
         raise ValueError("jobs precisa estar entre 1 e 8")
     return jobs
+
+
+def effective_chrome_jobs(value: int) -> int:
+    """Cap concurrent full-Chrome startups where macOS makes them unreliable."""
+    requested = normalize_jobs(value)
+    configured = os.environ.get("CREATIVE_FORGE_CHROME_MAX_PARALLEL", "").strip()
+    if configured:
+        maximum = normalize_jobs(int(configured))
+    else:
+        maximum = 1 if sys.platform == "darwin" else 8
+    return min(requested, maximum)
 
 # Headless renderer. Override with CHROME_BIN if Chrome lives elsewhere.
 CHROME = os.environ.get(
@@ -311,6 +326,7 @@ def screenshot(
     out_png.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
         html_path = Path(td) / "ad.html"
+        profile_path = Path(td) / "chrome-profile"
         html_path.write_text(html_str)
         with tempfile.NamedTemporaryFile(
             dir=out_png.parent,
@@ -322,23 +338,70 @@ def screenshot(
         tmp_png.unlink()
         cmd = [
             CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars",
+            "--no-first-run", f"--user-data-dir={profile_path}",
             "--force-device-scale-factor=1", f"--window-size={w},{h}",
             f"--screenshot={tmp_png}", str(html_path),
         ]
-        try:
-            res = subprocess.run(
+        stdout_path = Path(td) / "chrome.stdout.log"
+        stderr_path = Path(td) / "chrome.stderr.log"
+        with stdout_path.open("w+", encoding="utf-8") as stdout_log, stderr_path.open(
+            "w+", encoding="utf-8"
+        ) as stderr_log:
+            # Chrome can emit more diagnostics than an OS pipe can buffer before
+            # writing the screenshot (notably on Chrome 150). File-backed logs
+            # keep the renderer from deadlocking while preserving useful errors.
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=stdout_log,
+                stderr=stderr_log,
                 text=True,
-                timeout=timeout_seconds,
+                start_new_session=True,
             )
-        except subprocess.TimeoutExpired:
+            deadline = time.monotonic() + timeout_seconds
+            valid_png = False
+            while time.monotonic() < deadline:
+                if tmp_png.is_file() and tmp_png.stat().st_size > 0:
+                    try:
+                        with Image.open(tmp_png) as image:
+                            image.load()
+                            valid_png = image.size == (w, h)
+                    except (OSError, ValueError):
+                        valid_png = False
+                    if valid_png:
+                        break
+                if process.poll() is not None:
+                    break
+                time.sleep(0.05)
+
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+            stdout_log.flush()
+            stderr_log.flush()
+            stdout_log.seek(0)
+            stderr_log.seek(0)
+            stdout = stdout_log.read(900)
+            stderr = stderr_log.read(900)
+
+        if not valid_png:
             tmp_png.unlink(missing_ok=True)
-            die(f"Chrome excedeu o timeout de {timeout_seconds}s.")
-        if res.returncode != 0 or not tmp_png.exists() or tmp_png.stat().st_size == 0:
-            tmp_png.unlink(missing_ok=True)
-            detail = (res.stderr or res.stdout or "sem saída do Chrome")[:900]
-            die(f"Chrome não gerou um PNG válido (exit {res.returncode}).\n{detail}")
+            detail = (stderr or stdout or "sem saída do Chrome")[:900]
+            if time.monotonic() >= deadline:
+                die(f"Chrome excedeu o timeout de {timeout_seconds}s.\n{detail}")
+            die(
+                f"Chrome não gerou um PNG válido (exit {process.returncode}).\n"
+                f"{detail}"
+            )
         tmp_png.replace(out_png)
 
 
@@ -401,7 +464,15 @@ def render_recipe(app: dict, app_slug: str, recipe_path: Path, fmt_override: str
         return out_png, width, height, locale, tag
 
     outs = []
-    with ThreadPoolExecutor(max_workers=normalize_jobs(jobs)) as executor:
+    requested_jobs = normalize_jobs(jobs)
+    chrome_jobs = effective_chrome_jobs(requested_jobs)
+    if chrome_jobs != requested_jobs:
+        print(
+            "  ⚠️  Chrome no macOS serializado para estabilidade; "
+            "defina CREATIVE_FORGE_CHROME_MAX_PARALLEL para override explícito",
+            flush=True,
+        )
+    with ThreadPoolExecutor(max_workers=chrome_jobs) as executor:
         futures = [executor.submit(render_one, job) for job in render_jobs]
         for future in as_completed(futures):
             out_png, width, height, locale, tag = future.result()

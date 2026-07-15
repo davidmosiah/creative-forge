@@ -15,7 +15,7 @@ export CREATIVE_FORGE_ROOT="${CREATIVE_FORGE_ROOT:-$HOME/creative-forge}"
 cd "$CREATIVE_FORGE_ROOT"
 ```
 
-For workflow rationale, current gaps and direct sources, read
+Read `PLAYBOOK.md` for the complete operating contract.
 
 ## Agent-driven boundary
 
@@ -29,6 +29,16 @@ Do not ask a validator to score taste, creative quality, cultural fit or why a
 metric moved. Put those decisions and rationale in agent receipts. Paid
 generation and external writes require human or explicit task authorization;
 activation, budget and spend require a separate explicit human confirmation.
+
+Apply **Creative Latitude**: strict on truth, rights, provenance, claims,
+spend, and external state; expansive on concepts, hooks, copy, composition,
+scenes, pacing, formats, and visual language. Never make a validator score
+taste or decide whether an original concept is creative enough.
+
+Keep concept and execution provenance distinct: `lineage_ref` anchors the
+brief's idea; optional recipe `execution_ref` anchors a format or audiovisual
+pattern and may use a different lineage. Only competitor-pattern execution is
+structurally matched. Never overwrite one reference with the other.
 
 ## Capability discovery
 
@@ -96,7 +106,7 @@ exists, or verify intentional silence honestly when it does not.
    python3 scripts/video_qa.py approve \
      --report qa/<slug>/<batch>/<locale>/<recipe>/playback-report.json \
      --artifact-key <key> --reviewer <codex|claude> \
-     --notes "what was actually inspected" --confirm-all
+     --review-file <video-review.json>
    python3 scripts/video_qa.py status \
      --report qa/<slug>/<batch>/<locale>/<recipe>/playback-report.json
    ```
@@ -105,6 +115,8 @@ Use `--all-markets` only when the task actually authorizes the full localization
 matrix. A browser-observed competitor pattern informs structure only; it never
 becomes a Remotion asset. Voiceover and SRT captions are per locale; the
 renderer places captions on-screen and the QA lock seals both files.
+The review JSON contains a free-form `notes` string and the exact checks the
+agent actually completed; it is not a shortcut around watching the full MP4.
 
 ## Current executable image path
 
@@ -123,8 +135,16 @@ renderer places captions on-screen and the QA lock seals both files.
 3. Refresh stale analytics through PostHog MCP. Keep `not_testflight`,
    `not_emulator`, project, window and app filters in `signals/<slug>.yaml`.
    Without spend/revenue, report that ROAS is unavailable.
-4. For the current image path, adapt a cited competitor pattern's structure,
-   never its art, media or literal copy. Every recipe needs `research_refs`,
+4. Choose the concept lineage honestly and keep its `lineage_ref` in the
+   brief. If the recipe adapts a format or audiovisual pattern, declare a
+   separate `execution_ref`; it may use a different lineage. Only an execution
+   reference classified as `competitor_pattern` requires structural
+   `swiped_from`/angle matching. Without one, the agent may use an original
+   hook, composition, copy, scene plan, pacing, format, and visual language.
+   For video, original execution also means no structural `references`; when
+   `execution_ref` is present, `references` covers exactly that verified video
+   pattern rather than every concept research source.
+   Every recipe still needs `research_refs`,
    evidence-backed `claims_used`, explicit target markets/platforms, on-canvas
    copy and off-canvas `ad_copy` for every targeted `copy_language`. The
    recipe's `target_markets` is the render/QA boundary. If two targets share a
@@ -138,18 +158,21 @@ renderer places captions on-screen and the QA lock seals both files.
    python3 scripts/forge.py build --app <slug> --batch-id <id> --jobs 4
    ```
 
-6. Open and inspect every generated **contact sheets** file. Check copy language,
-   spelling, readability, contrast, image anatomy/artifacts, truthfulness, brand,
-   Story/Reels safe zones, and evidence fidelity — each creative must visibly
-   follow the cited competitor pattern's structure/angle from
-   `swipe/<app>/competitors.yaml`
-   (structure copied, art and words ours; off-strategy creatives are blocked).
+6. Use generated **contact sheets** only as an index. Open every original PNG
+   at native resolution and write a specific note for each `artifact_key`.
+   Check copy, readability, artifacts, truth, brand, safe zones, and lineage
+   fidelity. Structural match applies only to competitor-pattern execution;
+   original execution is reviewed against its hypothesis and concept anchor.
    Only after inspection:
 
    ```bash
-   python3 scripts/qa.py approve --report <report.json> --reviewer <codex|claude> --confirm-all
+   python3 scripts/qa.py approve --report <report.json> \
+     --reviewer <codex|claude> --review-file <qa-review.json>
    python3 scripts/qa.py status --report <report.json>
    ```
+
+   The review JSON contains the completed check names and one non-empty
+   `{artifact_key, notes}` entry per original PNG.
 
 7. Validate the audience plan; publish targets ONE approved audience from
    `audiences/<app>.yaml` (cold = broad by country; never religious/sensitive
@@ -196,7 +219,8 @@ renderer places captions on-screen and the QA lock seals both files.
 - Do not claim CPP, RevenueCat events, Remotion license eligibility, Meta video
   upload/processing or provider availability without a fresh live receipt.
 - For video, Claude/Codex must inspect each localized artifact and create the
-  sealed per-artifact receipt; codec/timing checks cannot replace visual/
+  sealed per-artifact receipt using the native-resolution midpoint frame for
+  every scene; codec/timing checks cannot replace visual/
   cultural QA. When audio exists, review sound and muted. For intentional
   silence, verify silence and muted comprehension without a false audio claim.
 - É proibido: nunca ativar campaign/ad set/ad e nunca mudar orçamento ou gasto. Isso

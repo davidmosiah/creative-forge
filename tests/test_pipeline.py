@@ -8,17 +8,16 @@ from unittest import mock
 from PIL import Image
 
 from scripts import forge, publish, qa
+from tests.qa_fixtures import approve_report, production_report
 
 
 class PublishGateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         image = self.root / "creative.png"
         Image.new("RGB", (1080, 1080), "white").save(image)
-        automated = qa.audit_outputs(
-            [
-                {
+        spec = {
                     "path": str(image),
                     "recipe": "morning",
                     "format": "square",
@@ -38,9 +37,17 @@ class PublishGateTests(unittest.TestCase):
                         "headline": "Uma caminhada ao amanhecer",
                     },
                 }
-            ]
+        self.legacy_report = qa.build_report(
+            "sunrise-demo",
+            "legacy-batch",
+            qa.audit_outputs([spec]),
         )
-        self.report = qa.build_report("sunrise-demo", "batch-1", automated)
+        self.report = production_report(
+            self.root,
+            "sunrise-demo",
+            "batch-1",
+            [spec],
+        )
         self.capabilities = {
             "provider": "meta_ads_mcp",
             "agent": "claude",
@@ -126,11 +133,7 @@ class PublishGateTests(unittest.TestCase):
         self.temp.cleanup()
 
     def approve(self):
-        return qa.approve_visual(
-            self.report,
-            "codex",
-            {name: True for name in qa.VISUAL_CHECKS},
-        )
+        return approve_report(self.report, "codex")
 
     def prepare(self, report, capabilities=None, publish_policy=None):
         return publish.prepare_manifest(
@@ -149,8 +152,15 @@ class PublishGateTests(unittest.TestCase):
             briefs=self.briefs,
             readiness_receipt=self.readiness_receipt,
             evidence_root=self.root,
+            workspace_root=self.root,
             now=self.now,
         )
+
+    def test_legacy_qa_report_cannot_reach_publish(self):
+        self.assertEqual(self.legacy_report["version"], 1)
+
+        with self.assertRaisesRegex(publish.PublishBlocked, "proveniência.*version 2"):
+            self.prepare(approve_report(self.legacy_report, "codex"))
 
     def test_manifest_ships_one_ad_per_concept_variant_in_primary_format(self):
         manifest = self.prepare(self.approve())
@@ -202,6 +212,7 @@ class PublishGateTests(unittest.TestCase):
                 app_config=self.app_config,
                 briefs=self.briefs,
                 readiness_receipt=self.readiness_receipt,
+                workspace_root=self.root,
                 now=self.now,
             )
 
@@ -216,11 +227,7 @@ class PublishGateTests(unittest.TestCase):
         report = self.report
         report["records"][0]["media_kind"] = "video"
         report["input_digest"] = qa.canonical_input_digest(report["records"])
-        approved = qa.approve_visual(
-            report,
-            "codex",
-            {name: True for name in qa.VISUAL_CHECKS},
-        )
+        approved = approve_report(report, "codex")
 
         with self.assertRaisesRegex(publish.PublishBlocked, "vídeo.*capability"):
             self.prepare(approved)
@@ -245,11 +252,14 @@ class PublishGateTests(unittest.TestCase):
             "empty",
             {"status": "pass", "errors": [], "warnings": [], "records": []},
         )
-        report = qa.approve_visual(
-            report,
-            "codex",
-            {name: True for name in qa.VISUAL_CHECKS},
+        report.update(
+            {
+                "version": 2,
+                "provenance_required": True,
+                "input_digest": qa.canonical_input_digest([]),
+            }
         )
+        report = approve_report(report, "codex")
 
         with self.assertRaises(publish.PublishBlocked):
             self.prepare(report)
@@ -271,7 +281,9 @@ class PublishGateTests(unittest.TestCase):
             "items": [{"item_key": manifest["items"][0]["item_key"], "creative_id": "1", "ad_id": "2"}],
         }
 
-        errors = publish.verify_receipt(manifest, receipt)
+        errors = publish.verify_receipt(
+            manifest, receipt, expected_app="sunrise-demo"
+        )
 
         self.assertTrue(any("ACTIVE" in error for error in errors))
 
@@ -288,7 +300,9 @@ class PublishGateTests(unittest.TestCase):
             "items": [item, dict(item)],
         }
 
-        errors = publish.verify_receipt(manifest, receipt)
+        errors = publish.verify_receipt(
+            manifest, receipt, expected_app="sunrise-demo"
+        )
 
         self.assertTrue(any("duplicados" in error for error in errors))
         self.assertTrue(any("não comprova status PAUSED" in error for error in errors))
@@ -309,9 +323,41 @@ class PublishGateTests(unittest.TestCase):
             ],
         }
 
-        errors = publish.verify_receipt(manifest, receipt)
+        errors = publish.verify_receipt(
+            manifest, receipt, expected_app="sunrise-demo"
+        )
 
         self.assertTrue(any("manifest_digest" in error and "manifesto" in error for error in errors))
+
+    def test_receipt_rejects_missing_or_duplicate_manifest_item_keys(self):
+        base = self.prepare(self.approve())
+        for label, items in (
+            ("missing", [{**base["items"][0], "item_key": ""}]),
+            ("duplicate", [base["items"][0], dict(base["items"][0])]),
+        ):
+            with self.subTest(label=label):
+                manifest = {**base, "items": items}
+                manifest["manifest_digest"] = publish.canonical_digest(
+                    {
+                        key: value
+                        for key, value in manifest.items()
+                        if key != "manifest_digest"
+                    }
+                )
+                receipt = {
+                    "manifest_digest": manifest["manifest_digest"],
+                    "delivery_status": "PAUSED",
+                    "items": [],
+                }
+
+                errors = publish.verify_receipt(
+                    manifest, receipt, expected_app="sunrise-demo"
+                )
+
+                self.assertTrue(
+                    any("manifest item_key" in error for error in errors),
+                    errors,
+                )
 
     def test_preflight_aggregation_blocks_any_failed_component(self):
         result = forge.aggregate_gates(
@@ -399,7 +445,7 @@ class PublishGateTests(unittest.TestCase):
     def test_video_surfaces_are_part_of_the_app_preflight(self):
         swipe = self.root / "swipe" / "sunrise-demo"
         recipes = self.root / "recipes" / "sunrise-demo" / "video"
-        swipe.mkdir(parents=True)
+        swipe.mkdir(parents=True, exist_ok=True)
         recipes.mkdir(parents=True)
         (swipe / "video-patterns.yaml").write_text("version: 1\n")
         (recipes / "concept.yaml").write_text("version: 1\n")

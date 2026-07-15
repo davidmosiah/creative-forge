@@ -75,6 +75,38 @@ def load_yaml(path: Path) -> dict:
     return data
 
 
+def merge_research_registries(
+    patterns: dict,
+    competitors: dict,
+) -> tuple[dict[str, dict], list[str]]:
+    """Merge complementary records without allowing identity truth to drift."""
+    pattern_by_id = {
+        item.get("id"): item
+        for item in patterns.get("patterns", []) or []
+        if isinstance(item, dict) and item.get("id")
+    }
+    competitor_by_id = {
+        item.get("id"): item
+        for item in competitors.get("creatives", []) or []
+        if isinstance(item, dict) and item.get("id")
+    }
+    errors = []
+    for record_id in sorted(set(pattern_by_id) & set(competitor_by_id)):
+        pattern = pattern_by_id[record_id]
+        competitor = competitor_by_id[record_id]
+        for field in ("source_url", "lineage", "evidence_level"):
+            left, right = pattern.get(field), competitor.get(field)
+            if left not in (None, "") and right not in (None, "") and left != right:
+                errors.append(
+                    f"research registry conflict {record_id}.{field}: "
+                    f"video-patterns={left!r} competitors={right!r}"
+                )
+    merged = {key: dict(value) for key, value in competitor_by_id.items()}
+    for key, value in pattern_by_id.items():
+        merged[key] = {**merged.get(key, {}), **value}
+    return merged, errors
+
+
 def canonical_digest(value) -> str:
     return hashlib.sha256(
         json.dumps(
@@ -393,8 +425,8 @@ def audit_recipe(
             errors.append(f"claim desconhecida ou sem evidência: {claim}")
 
     references = recipe.get("references", []) or []
-    if not isinstance(references, list) or not references:
-        errors.append("recipe de vídeo sem referências")
+    if not isinstance(references, list):
+        errors.append("recipe.references precisa ser uma lista")
         references = []
     seen_reference_ids = set()
     for index, reference in enumerate(references):
@@ -422,13 +454,19 @@ def audit_recipe(
         if isinstance(reference, dict) and reference.get("id")
     }
     research_refs = set(recipe.get("research_refs", []) or [])
-    if reference_ids != research_refs:
-        errors.append("recipe.research_refs diverge dos IDs em references")
+    execution_ref = recipe.get("execution_ref")
+    if execution_ref and execution_ref not in research_refs:
+        errors.append("recipe.execution_ref precisa estar em research_refs")
+    if execution_ref and reference_ids != {execution_ref}:
+        errors.append("recipe.references precisa cobrir exatamente execution_ref")
+    if not execution_ref and reference_ids:
+        errors.append("recipe original não deve declarar referências estruturais")
 
     patterns_path = root / "swipe" / str(app_slug) / "video-patterns.yaml"
-    patterns = {}
+    patterns = {"patterns": []}
     if not patterns_path.is_file():
-        errors.append(f"video patterns obrigatório e ausente: {patterns_path}")
+        if execution_ref or reference_ids:
+            errors.append(f"video patterns obrigatório e ausente: {patterns_path}")
     else:
         patterns = load_yaml(patterns_path)
         pattern_audit = video_mining.audit_video_patterns(
@@ -448,14 +486,16 @@ def audit_recipe(
             for item in patterns.get("patterns", []) or []
             if isinstance(item, dict) and item.get("id")
         }
-        for ref in sorted(research_refs - set(known_patterns)):
-            errors.append(f"research_ref de vídeo inexistente: {ref}")
         references_by_id = {
             item.get("id"): item
             for item in references
             if isinstance(item, dict) and item.get("id")
         }
-        for ref in sorted(research_refs & set(known_patterns)):
+        if execution_ref and execution_ref not in known_patterns:
+            errors.append(
+                f"execution_ref audiovisual inexistente em video patterns: {execution_ref}"
+            )
+        for ref in sorted(reference_ids & set(known_patterns)):
             inline = references_by_id.get(ref) or {}
             canonical = known_patterns[ref]
             if inline.get("source_url") != canonical.get("source_url"):
@@ -709,27 +749,32 @@ def audit_recipe(
         errors.append(f"brief_ref de vídeo inexistente: {recipe.get('brief_ref')}")
     else:
         brief = briefs.load_yaml(brief_path)
-        known_brief_refs = {
-            item.get("id")
-            for item in patterns.get("patterns", []) or []
-            if isinstance(item, dict) and item.get("id")
-        }
         competitor_path = root / "swipe" / str(app_slug) / "competitors.yaml"
+        competitor_data = {}
         if competitor_path.is_file():
             competitor_data = load_yaml(competitor_path)
-            known_brief_refs.update(
-                item.get("id")
-                for item in competitor_data.get("creatives", []) or []
-                if isinstance(item, dict) and item.get("id")
-            )
+        research_by_id, registry_errors = merge_research_registries(
+            patterns,
+            competitor_data,
+        )
+        errors.extend(registry_errors)
+        for ref in sorted(research_refs - set(research_by_id)):
+            errors.append(f"research_ref de vídeo inexistente: {ref}")
         brief_audit = briefs.audit_brief(
             brief,
             expected_app=app_slug,
-            known_research_refs=known_brief_refs,
+            research_by_id=research_by_id,
             supported_markets=set(app_markets),
         )
         errors.extend(f"brief: {error}" for error in brief_audit["errors"])
-        errors.extend(briefs.recipe_binding_errors(recipe, brief, "video"))
+        errors.extend(
+            briefs.recipe_binding_errors(
+                recipe,
+                brief,
+                "video",
+                research_by_id=research_by_id,
+            )
+        )
 
     return {
         "status": "pass" if not errors else "fail",

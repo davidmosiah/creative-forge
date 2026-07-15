@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image
+import yaml
 
 from scripts import experiments, publish, qa
+from tests.qa_fixtures import approve_report, production_report
 
 
 def canonical_json_bytes(value):
@@ -59,7 +61,7 @@ def publish_readback_envelope(item, provider_response=None):
 class PublishEvidenceContractTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         first = self.root / "first.png"
         second = self.root / "second.png"
         Image.new("RGB", (1080, 1080), "white").save(first)
@@ -88,17 +90,21 @@ class PublishEvidenceContractTests(unittest.TestCase):
                     },
                 }
             )
-        automated = qa.audit_outputs(specs)
-        report = qa.build_report("sunrise-demo", "batch-1", automated)
-        self.report = qa.approve_visual(
-            report, "codex", {name: True for name in qa.VISUAL_CHECKS}
+        self.specs = specs
+        report = production_report(
+            self.root,
+            "sunrise-demo",
+            "batch-1",
+            specs,
         )
-        single_report = qa.build_report(
-            "sunrise-demo", "batch-1-single", qa.audit_outputs(specs[:1])
+        self.report = approve_report(report, "codex")
+        single_report = production_report(
+            self.root,
+            "sunrise-demo",
+            "batch-1-single",
+            specs[:1],
         )
-        self.single_report = qa.approve_visual(
-            single_report, "codex", {name: True for name in qa.VISUAL_CHECKS}
-        )
+        self.single_report = approve_report(single_report, "codex")
         self.now = datetime(2026, 7, 9, 18, 30, tzinfo=timezone.utc)
         self.capabilities = {
             "provider": "meta_ads_mcp",
@@ -210,11 +216,29 @@ class PublishEvidenceContractTests(unittest.TestCase):
             "briefs": self.briefs,
             "readiness_receipt": self.readiness_receipt,
             "evidence_root": self.root,
+            "workspace_root": self.root,
             "now": self.now,
         }
         arguments.update(overrides)
         report = arguments.pop("report", self.report)
         return publish.prepare_manifest(report, self.capabilities, **arguments)
+
+    def approved_report_for_app_config(
+        self,
+        app_config,
+        batch_id,
+        *,
+        single=False,
+    ):
+        app_path = self.root / "apps" / "sunrise-demo.yaml"
+        app_path.write_text(yaml.safe_dump(app_config, sort_keys=False))
+        report = production_report(
+            self.root,
+            "sunrise-demo",
+            batch_id,
+            self.specs[:1] if single else self.specs,
+        )
+        return approve_report(report, "codex")
 
     def test_manifest_preserves_every_concept_variant_pair(self):
         manifest = self.prepare()
@@ -233,6 +257,10 @@ class PublishEvidenceContractTests(unittest.TestCase):
         self.assertEqual(manifest["destination"]["ref"], "default")
         self.assertIsNone(manifest["destination"]["custom_product_page_id"])
         self.assertEqual(
+            manifest["app_config_provenance"]["path"],
+            str(self.root / "apps" / "sunrise-demo.yaml"),
+        )
+        self.assertEqual(
             manifest["readback_requirement"]["tool"], "ads_get_ad"
         )
         self.assertFalse(
@@ -243,6 +271,33 @@ class PublishEvidenceContractTests(unittest.TestCase):
         with self.assertRaisesRegex(publish.PublishBlocked, "readiness.*live"):
             self.prepare(readiness_receipt=None)
 
+        for tool in (
+            "ads_create_ad",
+            "ads-create-ad",
+            "ads.create.ad",
+            "adsCreateAd",
+            "adscreatead",
+            "ads_update_ad",
+            "ads_delete_ad",
+            "ads_activate_ad",
+            "ads_publish_ad",
+            "ads_upsert_ad",
+            "ads_set_status",
+            "ads_set_budget",
+            "ads_change_budget",
+            "ads_reset_budget",
+            "ads_increase_budget",
+            "apps_forget_user",
+            "ads_get_and_destroy_ad",
+        ):
+            with self.subTest(tool=tool):
+                write_receipt = copy.deepcopy(self.readiness_receipt)
+                write_receipt["tool"] = tool
+                with self.assertRaisesRegex(
+                    publish.PublishBlocked, "não pode ser create"
+                ):
+                    self.prepare(readiness_receipt=write_receipt)
+
     def test_all_stage_required_readiness_receipts_are_live_and_bound(self):
         app_config = copy.deepcopy(self.app_config)
         app_config["readiness"]["required_receipts"].update(
@@ -252,8 +307,12 @@ class PublishEvidenceContractTests(unittest.TestCase):
                 "meta_video_publish": "blocked_missing_capability",
             }
         )
+        runtime_report = self.approved_report_for_app_config(
+            app_config,
+            "batch-runtime-readiness",
+        )
         with self.assertRaisesRegex(publish.PublishBlocked, "meta_app_events"):
-            self.prepare(app_config=app_config)
+            self.prepare(app_config=app_config, report=runtime_report)
 
         bundle = {
             "version": 1,
@@ -289,6 +348,7 @@ class PublishEvidenceContractTests(unittest.TestCase):
         manifest = self.prepare(
             app_config=app_config,
             readiness_receipt=bundle,
+            report=runtime_report,
         )
 
         self.assertEqual(
@@ -322,11 +382,16 @@ class PublishEvidenceContractTests(unittest.TestCase):
             "url": "https://apps.apple.com/app/id1?ppid=morning",
             "custom_product_page_id": "cpp-morning",
         }
+        custom_report = self.approved_report_for_app_config(
+            app_config,
+            "batch-custom-destination",
+        )
 
         manifest = self.prepare(
             app_config=app_config,
             briefs=briefs,
             readiness_receipt=readiness,
+            report=custom_report,
         )
 
         self.assertEqual(
@@ -342,6 +407,114 @@ class PublishEvidenceContractTests(unittest.TestCase):
         tampered["records"][0]["cta"] = "CTA adulterado"
 
         with self.assertRaisesRegex(publish.PublishBlocked, "artefatos mudaram"):
+            self.prepare(report=tampered)
+
+    def test_recalculated_qa_digest_cannot_relabel_competitor_evidence_as_own_winner(self):
+        tampered = copy.deepcopy(self.single_report)
+        tampered["records"][0]["concept_lineage"] = "own_winner"
+        tampered["input_digest"] = qa.canonical_input_digest(tampered["records"])
+        tampered["approved_input_digest"] = tampered["input_digest"]
+        tampered["approved_report_identity_digest"] = qa.report_identity_digest(
+            tampered
+        )
+        tampered["visual_approval_digest"] = qa.visual_approval_digest(tampered)
+
+        with self.assertRaisesRegex(publish.PublishBlocked, "artefatos mudaram"):
+            self.prepare(report=tampered)
+
+    def test_recalculated_qa_digest_cannot_retarget_core_inputs_to_regular_files(self):
+        tampered = copy.deepcopy(self.single_report)
+        recipe_input = next(
+            item
+            for item in tampered["records"][0]["input_files"]
+            if item["role"] == "recipe"
+        )
+        alternate = self.root / "alternate-recipe.yaml"
+        alternate.write_bytes(Path(recipe_input["path"]).read_bytes())
+        recipe_input.update(
+            {
+                "path": str(alternate),
+                "resolved_path": str(alternate.resolve()),
+                "sha256": qa.sha256(alternate),
+            }
+        )
+        tampered["input_digest"] = qa.canonical_input_digest(tampered["records"])
+        tampered["approved_input_digest"] = tampered["input_digest"]
+        tampered["approved_report_identity_digest"] = qa.report_identity_digest(
+            tampered
+        )
+        tampered["visual_approval_digest"] = qa.visual_approval_digest(tampered)
+
+        with self.assertRaisesRegex(publish.PublishBlocked, "core input|canônico"):
+            self.prepare(report=tampered)
+
+    def test_recalculated_qa_digest_cannot_hide_an_ancestor_symlink(self):
+        tampered = copy.deepcopy(self.single_report)
+        recipe_input = next(
+            item
+            for item in tampered["records"][0]["input_files"]
+            if item["role"] == "recipe"
+        )
+        recipe_path = Path(recipe_input["path"])
+        canonical_dir = recipe_path.parent
+        attacker_dir = self.root / "attacker-recipes"
+        canonical_dir.rename(attacker_dir)
+        canonical_dir.symlink_to(attacker_dir, target_is_directory=True)
+        recipe_input.update(
+            {
+                "resolved_path": str(recipe_path.resolve()),
+                "sha256": qa.sha256(recipe_path),
+            }
+        )
+        tampered["input_digest"] = qa.canonical_input_digest(tampered["records"])
+        tampered["approved_input_digest"] = tampered["input_digest"]
+        tampered["approved_report_identity_digest"] = qa.report_identity_digest(
+            tampered
+        )
+        tampered["visual_approval_digest"] = qa.visual_approval_digest(tampered)
+
+        with self.assertRaisesRegex(publish.PublishBlocked, "symlink|canônico"):
+            self.prepare(report=tampered)
+
+    def test_recalculated_qa_digest_cannot_use_split_view_dotdot_paths(self):
+        tampered = copy.deepcopy(self.single_report)
+        recipe_input = next(
+            item
+            for item in tampered["records"][0]["input_files"]
+            if item["role"] == "recipe"
+        )
+        canonical_recipe = Path(recipe_input["path"])
+        attacker_root = self.root / "attacker-tree"
+        attacker_recipe = (
+            attacker_root
+            / "recipes"
+            / "sunrise-demo"
+            / canonical_recipe.name
+        )
+        attacker_recipe.parent.mkdir(parents=True)
+        attacker_recipe.write_bytes(canonical_recipe.read_bytes())
+        (attacker_root / "nest").mkdir()
+        escape = self.root / "escape"
+        escape.symlink_to(attacker_root / "nest", target_is_directory=True)
+        authored_path = (
+            f"{escape}/../recipes/sunrise-demo/{canonical_recipe.name}"
+        )
+        actual_path = Path(authored_path)
+        recipe_input.update(
+            {
+                "path": authored_path,
+                "resolved_path": str(actual_path.resolve()),
+                "sha256": qa.sha256(actual_path),
+            }
+        )
+        tampered["input_digest"] = qa.canonical_input_digest(tampered["records"])
+        tampered["approved_input_digest"] = tampered["input_digest"]
+        tampered["approved_report_identity_digest"] = qa.report_identity_digest(
+            tampered
+        )
+        tampered["visual_approval_digest"] = qa.visual_approval_digest(tampered)
+
+        with self.assertRaisesRegex(publish.PublishBlocked, r"path|canônico|\.\."):
             self.prepare(report=tampered)
 
     def test_capability_must_name_a_declared_readback_tool(self):
@@ -371,38 +544,62 @@ class PublishEvidenceContractTests(unittest.TestCase):
                 briefs=self.briefs,
                 readiness_receipt=self.readiness_receipt,
                 evidence_root=self.root,
+                workspace_root=self.root,
                 now=self.now,
             )
 
-    def test_create_tool_cannot_masquerade_as_readback(self):
-        capabilities = dict(self.capabilities)
-        capabilities["readback_tool"] = "ads_create_ad"
+    def test_write_tool_cannot_masquerade_as_readback(self):
+        for tool in (
+            "ads_create_ad",
+            "ads-create-ad",
+            "ads.createAd",
+            "ads/create_ad",
+            "ADS CREATE AD",
+            "adsCreateAd",
+            "ads_update_ad",
+            "ads_delete_ad",
+            "ads_activate_ad",
+            "ads_publish_ad",
+            "ads_upsert_ad",
+            "ads_set_status",
+            "ads_set_budget",
+            "ads_change_budget",
+            "ads_reset_budget",
+            "ads_increase_budget",
+            "apps_forget_user",
+            "ads_get_and_destroy_ad",
+        ):
+            with self.subTest(tool=tool):
+                capabilities = dict(self.capabilities)
+                capabilities["readback_tool"] = tool
+                capabilities["tools"] = [*capabilities["tools"], tool]
 
-        with self.assertRaisesRegex(publish.PublishBlocked, "readback_tool"):
-            publish.prepare_manifest(
-                self.report,
-                capabilities,
-                account_id="act_1",
-                campaign_id="campaign_1",
-                ad_set_id="adset_1",
-                audience_plan=self.audience_plan,
-                audience_id="br-cold-broad",
-                markets=[
-                    {
-                        "id": "br",
-                        "countries": ["BR"],
-                        "locale": "pt-BR",
-                        "app_locale": "pt-BR",
-                        "copy_language": "pt",
-                    }
-                ],
-                publish_policy={"primary_format": "square"},
-                app_config=self.app_config,
-                briefs=self.briefs,
-                readiness_receipt=self.readiness_receipt,
-                evidence_root=self.root,
-                now=self.now,
-            )
+                with self.assertRaisesRegex(publish.PublishBlocked, "readback_tool"):
+                    publish.prepare_manifest(
+                        self.report,
+                        capabilities,
+                        account_id="act_1",
+                        campaign_id="campaign_1",
+                        ad_set_id="adset_1",
+                        audience_plan=self.audience_plan,
+                        audience_id="br-cold-broad",
+                        markets=[
+                            {
+                                "id": "br",
+                                "countries": ["BR"],
+                                "locale": "pt-BR",
+                                "app_locale": "pt-BR",
+                                "copy_language": "pt",
+                            }
+                        ],
+                        publish_policy={"primary_format": "square"},
+                        app_config=self.app_config,
+                        briefs=self.briefs,
+                        readiness_receipt=self.readiness_receipt,
+                        evidence_root=self.root,
+                        workspace_root=self.root,
+                        now=self.now,
+                    )
 
     def test_receipt_requires_exact_live_readback_evidence_for_each_artifact(self):
         manifest = self.prepare(report=self.single_report)
@@ -434,12 +631,44 @@ class PublishEvidenceContractTests(unittest.TestCase):
 
         self.assertEqual(
             publish.verify_receipt(
-                manifest, receipt, now=self.now, evidence_root=self.root
+                manifest,
+                receipt,
+                expected_app="sunrise-demo",
+                now=self.now,
+                evidence_root=self.root,
+                workspace_root=self.root,
             ), []
         )
+        app_config_path = self.root / "apps" / "sunrise-demo.yaml"
+        original_app_config = app_config_path.read_text()
+        changed_app_config = yaml.safe_load(original_app_config)
+        changed_app_config["readiness"]["required_receipts"][
+            "meta_app_events"
+        ] = "required_live"
+        app_config_path.write_text(
+            yaml.safe_dump(changed_app_config, sort_keys=False)
+        )
+        policy_errors = publish.verify_receipt(
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
+        )
+        self.assertTrue(
+            any("app config" in error or "policy" in error for error in policy_errors),
+            policy_errors,
+        )
+        app_config_path.write_text(original_app_config)
         receipt["items"][0].pop("response_digest")
         errors = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(any("response_digest" in error for error in errors))
         receipt["items"][0]["response_digest"] = hashlib.sha256(
@@ -447,16 +676,378 @@ class PublishEvidenceContractTests(unittest.TestCase):
         ).hexdigest()
         receipt["items"][0]["observed_at"] = "2026-07-09T17:00:00Z"
         errors = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(any("observed_at" in error for error in errors))
 
         receipt["items"][0]["observed_at"] = "2026-07-09T18:30:00Z"
         stale_now = datetime(2026, 7, 9, 20, 0, tzinfo=timezone.utc)
         errors = publish.verify_receipt(
-            manifest, receipt, now=stale_now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=stale_now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(any("expirado" in error for error in errors))
+
+    def test_receipt_revalidates_every_item_was_requested_and_read_back_paused(self):
+        manifest = self.prepare(report=self.single_report)
+        item = manifest["items"][0]
+        receipt_item = {
+            "item_key": item["item_key"],
+            "provider": "meta_ads_mcp",
+            "tool": "ads_get_ad",
+            "account_id": "act_1",
+            "campaign_id": "campaign_1",
+            "ad_set_id": "adset_1",
+            "creative_id": "creative-1",
+            "ad_id": "ad-1",
+            "artifact_sha256": item["sha256"],
+            "status": "PAUSED",
+            "observed_at": "2026-07-09T18:30:00Z",
+        }
+        receipt_item.update(self.paused_evidence("requested-paused.json", receipt_item))
+        receipt = {
+            "manifest_digest": manifest["manifest_digest"],
+            "provider": "meta_ads_mcp",
+            "verification_basis": "live_provider_readback",
+            "local_validation_sufficient": False,
+            "delivery_status": "PAUSED",
+            "items": [receipt_item],
+        }
+        mutations = (
+            ("requested_status", lambda candidate: candidate.__setitem__("requested_status", "ACTIVE")),
+            ("activation_allowed", lambda candidate: candidate.__setitem__("activation_allowed", True)),
+            (
+                "item requested_status",
+                lambda candidate: candidate["items"][0].__setitem__("requested_status", "ACTIVE"),
+            ),
+        )
+
+        for label, mutate in mutations:
+            with self.subTest(label=label):
+                unsafe = copy.deepcopy(manifest)
+                mutate(unsafe)
+                unsafe["manifest_digest"] = publish.canonical_digest(
+                    {key: value for key, value in unsafe.items() if key != "manifest_digest"}
+                )
+                unsafe_receipt = copy.deepcopy(receipt)
+                unsafe_receipt["manifest_digest"] = unsafe["manifest_digest"]
+
+                errors = publish.verify_receipt(
+                    unsafe,
+                    unsafe_receipt,
+                    expected_app="sunrise-demo",
+                    now=self.now,
+                    evidence_root=self.root,
+                    workspace_root=self.root,
+                )
+
+                self.assertTrue(any("PAUSED" in error or "activation_allowed" in error for error in errors), errors)
+
+    def test_receipt_revalidates_live_manifest_semantics_after_digest_recalculation(self):
+        base_manifest = self.prepare(report=self.single_report)
+
+        def receipt_for(manifest, suffix):
+            manifest_item = manifest["items"][0]
+            receipt_item = {
+                "item_key": manifest_item["item_key"],
+                "provider": manifest["provider"],
+                "tool": manifest["readback_requirement"]["tool"],
+                "account_id": manifest["account_id"],
+                "campaign_id": manifest["campaign_id"],
+                "ad_set_id": manifest["ad_set_id"],
+                "creative_id": f"creative-{suffix}",
+                "ad_id": f"ad-{suffix}",
+                "artifact_sha256": manifest_item["sha256"],
+                "status": "PAUSED",
+                "observed_at": "2026-07-09T18:30:00Z",
+            }
+            receipt_item.update(
+                self.paused_evidence(f"semantic-{suffix}.json", receipt_item)
+            )
+            return {
+                "manifest_digest": manifest["manifest_digest"],
+                "provider": manifest["provider"],
+                "verification_basis": "live_provider_readback",
+                "local_validation_sufficient": False,
+                "delivery_status": "PAUSED",
+                "items": [receipt_item],
+            }
+
+        def runtime_downgrade(candidate):
+            runtime = copy.deepcopy(candidate["destination_readiness"])
+            runtime["receipt_type"] = "meta_app_events"
+            runtime["verification_basis"] = "local_file"
+            candidate["runtime_readiness"] = [runtime]
+
+        def runtime_identity_downgrade(candidate, field, value):
+            runtime = copy.deepcopy(candidate["destination_readiness"])
+            runtime["receipt_type"] = "meta_app_events"
+            runtime.pop("destination", None)
+            runtime[field] = value
+            candidate["runtime_readiness"] = [runtime]
+
+        mutations = (
+            ("version", lambda candidate: candidate.__setitem__("version", 1)),
+            ("provider", lambda candidate: candidate.__setitem__("provider", "other")),
+            (
+                "readback",
+                lambda candidate: candidate["readback_requirement"].__setitem__(
+                    "tool", "ads_create_ad"
+                ),
+            ),
+            (
+                "readback",
+                lambda candidate: candidate["readback_requirement"].__setitem__(
+                    "tool", "ads-create-ad"
+                ),
+            ),
+            (
+                "readback",
+                lambda candidate: candidate["readback_requirement"].__setitem__(
+                    "tool", "adsCreateAd"
+                ),
+            ),
+            (
+                "readback",
+                lambda candidate: candidate["readback_requirement"].__setitem__(
+                    "tool", "ads_update_ad"
+                ),
+            ),
+            (
+                "readback",
+                lambda candidate: candidate["readback_requirement"].__setitem__(
+                    "verification_basis", "local_file"
+                ),
+            ),
+            (
+                "readiness",
+                lambda candidate: candidate["destination_readiness"].__setitem__(
+                    "local_validation_sufficient", True
+                ),
+            ),
+            (
+                "readiness",
+                lambda candidate: candidate["destination_readiness"].__setitem__(
+                    "tool", "ads_create_ad"
+                ),
+            ),
+            (
+                "readiness",
+                lambda candidate: candidate["destination_readiness"].__setitem__(
+                    "tool", "ads_update_ad"
+                ),
+            ),
+            (
+                "app",
+                lambda candidate: candidate["destination_readiness"].__setitem__(
+                    "app", "other-app"
+                ),
+            ),
+            (
+                "status",
+                lambda candidate: candidate["destination_readiness"].__setitem__(
+                    "status", "unknown"
+                ),
+            ),
+            (
+                "destination",
+                lambda candidate: candidate["destination_readiness"].__setitem__(
+                    "destination",
+                    {
+                        "ref": "other",
+                        "type": "app_store",
+                        "url": "https://apps.apple.com/app/id-other",
+                        "custom_product_page_id": None,
+                    },
+                ),
+            ),
+            ("readiness", runtime_downgrade),
+            (
+                "app",
+                lambda candidate: runtime_identity_downgrade(
+                    candidate, "app", "other-app"
+                ),
+            ),
+            (
+                "status",
+                lambda candidate: runtime_identity_downgrade(
+                    candidate, "status", "unknown"
+                ),
+            ),
+        )
+
+        for index, (expected, mutate) in enumerate(mutations):
+            with self.subTest(expected=expected, index=index):
+                unsafe = copy.deepcopy(base_manifest)
+                mutate(unsafe)
+                unsafe["manifest_digest"] = publish.canonical_digest(
+                    {
+                        key: value
+                        for key, value in unsafe.items()
+                        if key != "manifest_digest"
+                    }
+                )
+                receipt = receipt_for(unsafe, str(index))
+
+                errors = publish.verify_receipt(
+                    unsafe,
+                    receipt,
+                    expected_app="sunrise-demo",
+                    now=self.now,
+                    evidence_root=self.root,
+                    workspace_root=self.root,
+                )
+
+                self.assertTrue(any(expected in error for error in errors), errors)
+
+    def test_receipt_rejects_removed_required_runtime_readiness(self):
+        app_config = copy.deepcopy(self.app_config)
+        app_config["readiness"]["required_receipts"][
+            "meta_app_events"
+        ] = "required_live"
+        bundle = {
+            "version": 1,
+            "app": "sunrise-demo",
+            "receipts": [
+                self.readiness_receipt,
+                {
+                    "receipt_type": "meta_app_events",
+                    "provider": "meta_ads_mcp",
+                    "tool": "events_get_status",
+                    "app": "sunrise-demo",
+                    "status": "ready",
+                    "verification_basis": "live_provider_readback",
+                    "local_validation_sufficient": False,
+                    "observed_at": "2026-07-09T18:15:00Z",
+                    **self.raw_evidence(
+                        "required-meta-events.json", b'{"events":"ready"}'
+                    ),
+                },
+            ],
+        }
+        runtime_report = self.approved_report_for_app_config(
+            app_config,
+            "batch-required-runtime",
+            single=True,
+        )
+        manifest = self.prepare(
+            report=runtime_report,
+            app_config=app_config,
+            readiness_receipt=bundle,
+        )
+        unsafe = copy.deepcopy(manifest)
+        unsafe["runtime_readiness"] = []
+        unsafe["required_readiness_receipt_types"] = [
+            "app_store_destination"
+        ]
+        unsafe["manifest_digest"] = publish.canonical_digest(
+            {
+                key: value
+                for key, value in unsafe.items()
+                if key != "manifest_digest"
+            }
+        )
+        item = unsafe["items"][0]
+        receipt_item = {
+            "item_key": item["item_key"],
+            "provider": unsafe["provider"],
+            "tool": unsafe["readback_requirement"]["tool"],
+            "account_id": unsafe["account_id"],
+            "campaign_id": unsafe["campaign_id"],
+            "ad_set_id": unsafe["ad_set_id"],
+            "creative_id": "creative-required",
+            "ad_id": "ad-required",
+            "artifact_sha256": item["sha256"],
+            "status": "PAUSED",
+            "observed_at": "2026-07-09T18:30:00Z",
+        }
+        receipt_item.update(
+            self.paused_evidence("required-runtime-readback.json", receipt_item)
+        )
+        receipt = {
+            "manifest_digest": unsafe["manifest_digest"],
+            "provider": unsafe["provider"],
+            "verification_basis": "live_provider_readback",
+            "local_validation_sufficient": False,
+            "delivery_status": "PAUSED",
+            "items": [receipt_item],
+        }
+
+        errors = publish.verify_receipt(
+            unsafe,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
+        )
+
+        self.assertTrue(any("required readiness" in error for error in errors), errors)
+
+        with self.assertRaises(TypeError):
+            publish.verify_receipt(
+                manifest,
+                receipt,
+                now=self.now,
+                evidence_root=self.root,
+                workspace_root=self.root,
+            )
+
+        other_config = copy.deepcopy(self.app_config)
+        other_config["slug"] = "other-app"
+        other_path = self.root / "apps" / "other-app.yaml"
+        other_path.write_text(yaml.safe_dump(other_config, sort_keys=False))
+        cross_app = copy.deepcopy(manifest)
+        cross_app["app"] = "other-app"
+        cross_app["destination_readiness"]["app"] = "other-app"
+        cross_app["runtime_readiness"] = []
+        cross_app["required_readiness_receipt_types"] = [
+            "app_store_destination"
+        ]
+        cross_app["app_config_provenance"] = {
+            "path": str(other_path),
+            "resolved_path": str(other_path.resolve(strict=True)),
+            "sha256": qa.sha256(other_path),
+            "readiness_policy_digest": publish.canonical_digest(
+                {
+                    "required_receipts": other_config["readiness"][
+                        "required_receipts"
+                    ]
+                }
+            ),
+        }
+        cross_app["manifest_digest"] = publish.canonical_digest(
+            {
+                key: value
+                for key, value in cross_app.items()
+                if key != "manifest_digest"
+            }
+        )
+        cross_app_receipt = copy.deepcopy(receipt)
+        cross_app_receipt["manifest_digest"] = cross_app["manifest_digest"]
+
+        cross_app_errors = publish.verify_receipt(
+            cross_app,
+            cross_app_receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
+        )
+
+        self.assertTrue(
+            any("expected_app" in error for error in cross_app_errors),
+            cross_app_errors,
+        )
 
     def test_paused_receipt_rejects_opaque_noncanonical_or_cross_bound_response(self):
         manifest = self.prepare(report=self.single_report)
@@ -484,7 +1075,12 @@ class PublishEvidenceContractTests(unittest.TestCase):
         }
         receipt_item.update(self.raw_evidence("opaque.json", b"provider response"))
         opaque = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(any("JSON" in error for error in opaque), opaque)
 
@@ -492,7 +1088,12 @@ class PublishEvidenceContractTests(unittest.TestCase):
         pretty = json.dumps(envelope, indent=2).encode()
         receipt_item.update(self.raw_evidence("pretty.json", pretty))
         noncanonical = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(any("canônic" in error for error in noncanonical), noncanonical)
 
@@ -501,7 +1102,12 @@ class PublishEvidenceContractTests(unittest.TestCase):
             self.raw_evidence("wrong-ad.json", canonical_json_bytes(envelope))
         )
         cross_bound = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(any("ad_id" in error for error in cross_bound), cross_bound)
 
@@ -521,7 +1127,12 @@ class PublishEvidenceContractTests(unittest.TestCase):
             self.raw_evidence("active-provider.json", canonical_json_bytes(envelope))
         )
         contradictory = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(
             any("provider_response" in error for error in contradictory),
@@ -562,8 +1173,10 @@ class PublishEvidenceContractTests(unittest.TestCase):
         errors = publish.verify_receipt(
             manifest,
             receipt,
+            expected_app="sunrise-demo",
             now=self.now,
             evidence_root=self.root,
+            workspace_root=self.root,
             enforce_freshness=False,
         )
 
@@ -653,7 +1266,12 @@ class PublishEvidenceContractTests(unittest.TestCase):
         }
 
         errors = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(any("creative_id duplicado" in error for error in errors))
         self.assertTrue(any("ad_id duplicado" in error for error in errors))
@@ -662,7 +1280,12 @@ class PublishEvidenceContractTests(unittest.TestCase):
         receipt["items"][1]["ad_id"] = "ad-2"
         (self.root / second_evidence["response_path"]).write_bytes(b"tampered")
         errors = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(any("response_digest" in error for error in errors))
 
@@ -674,7 +1297,12 @@ class PublishEvidenceContractTests(unittest.TestCase):
             response_digest=hashlib.sha256(b"outside-paused").hexdigest(),
         )
         errors = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
         self.assertTrue(any("escapa evidence_root" in error for error in errors))
 
@@ -710,7 +1338,12 @@ class PublishEvidenceContractTests(unittest.TestCase):
         )
 
         errors = publish.verify_receipt(
-            manifest, receipt, now=self.now, evidence_root=self.root
+            manifest,
+            receipt,
+            expected_app="sunrise-demo",
+            now=self.now,
+            evidence_root=self.root,
+            workspace_root=self.root,
         )
 
         self.assertTrue(
@@ -722,7 +1355,18 @@ class PublishEvidenceContractTests(unittest.TestCase):
 class ExperimentManifestBindingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.evidence_root = Path(self.temp.name)
+        self.evidence_root = Path(self.temp.name).resolve()
+        self.app_config_path = (
+            self.evidence_root / "apps" / "sunrise-demo.yaml"
+        )
+        self.app_config_path.parent.mkdir(parents=True)
+        self.app_config_path.write_text(
+            "version: 1\n"
+            "slug: sunrise-demo\n"
+            "readiness:\n"
+            "  required_receipts:\n"
+            "    app_store_destination: required_live\n"
+        )
         self.response_relative = Path("readbacks/paused-item.json")
         self.response_path = self.evidence_root / self.response_relative
         self.response_path.parent.mkdir(parents=True)
@@ -770,21 +1414,63 @@ class ExperimentManifestBindingTests(unittest.TestCase):
 
     def manifest(self):
         manifest = {
+            "version": 2,
             "provider": "meta_ads_mcp",
             "app": "sunrise-demo",
             "account_id": "act-1",
             "campaign_id": "campaign-1",
             "ad_set_id": "adset-1",
             "created_at": "2026-07-10T11:50:00Z",
-            "readback_requirement": {"tool": "ads_get_ad"},
+            "requested_status": "PAUSED",
+            "activation_allowed": False,
+            "readback_requirement": {
+                "provider": "meta_ads_mcp",
+                "tool": "ads_get_ad",
+                "verification_basis": "live_provider_readback",
+                "local_validation_sufficient": False,
+            },
+            "destination": {
+                "ref": "default",
+                "type": "app_store",
+                "url": "https://apps.apple.com/app/id1",
+                "custom_product_page_id": None,
+            },
+            "app_config_provenance": {
+                "path": str(self.app_config_path),
+                "resolved_path": str(self.app_config_path.resolve()),
+                "sha256": hashlib.sha256(
+                    self.app_config_path.read_bytes()
+                ).hexdigest(),
+                "readiness_policy_digest": publish.canonical_digest(
+                    {
+                        "required_receipts": {
+                            "app_store_destination": "required_live"
+                        }
+                    }
+                ),
+            },
             "destination_readiness": {
                 "receipt_type": "app_store_destination",
+                "provider": "app_store_connect_api",
+                "tool": "apps_get_app_store_version_localizations",
+                "app": "sunrise-demo",
+                "status": "ready",
+                "destination": {
+                    "ref": "default",
+                    "type": "app_store",
+                    "url": "https://apps.apple.com/app/id1",
+                    "custom_product_page_id": None,
+                },
+                "observed_at": "2026-07-10T11:55:00Z",
                 "response_path": self.readiness_relative.as_posix(),
                 "response_digest": hashlib.sha256(
                     self.readiness_path.read_bytes()
                 ).hexdigest(),
+                "verification_basis": "live_provider_readback",
+                "local_validation_sufficient": False,
             },
             "runtime_readiness": [],
+            "required_readiness_receipt_types": ["app_store_destination"],
             "items": [
                 {
                     "item_key": "item-1",
@@ -792,6 +1478,7 @@ class ExperimentManifestBindingTests(unittest.TestCase):
                     "concept_id": "morning-relief",
                     "variant_id": "hook-a",
                     "sha256": "f" * 64,
+                    "requested_status": "PAUSED",
                 }
             ],
         }
@@ -895,11 +1582,13 @@ class ExperimentManifestBindingTests(unittest.TestCase):
         receipt, source = self.bind_evidence(experiment, manifest)
         return experiments.audit_experiment(
             experiment,
+            expected_app="sunrise-demo",
             manifest=manifest,
             publish_receipt=receipt,
             metrics_source=source,
             briefs_root=briefs_root,
             evidence_root=self.evidence_root,
+            workspace_root=self.evidence_root,
         )
 
     def test_experiment_must_match_the_bound_manifest_item(self):

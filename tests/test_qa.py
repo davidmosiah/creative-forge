@@ -6,8 +6,32 @@ from pathlib import Path
 from unittest import mock
 
 from PIL import Image
+import yaml
 
 from scripts import qa
+
+
+def full_resolution_reviews(report):
+    return [
+        {
+            "artifact_key": record["artifact_key"],
+            "notes": "Test fixture opened at its original pixel dimensions.",
+        }
+        for record in report.get("records", [])
+    ]
+
+
+def approve_visual(report, reviewer, checks, *, artifact_reviews=None):
+    return qa.approve_visual(
+        report,
+        reviewer,
+        checks,
+        artifact_reviews=(
+            artifact_reviews
+            if artifact_reviews is not None
+            else full_resolution_reviews(report)
+        ),
+    )
 
 
 class QualityGateTests(unittest.TestCase):
@@ -46,13 +70,72 @@ class QualityGateTests(unittest.TestCase):
                 "lineage": {"meta-pain": "competitor_pattern"},
                 "claims_used": ["daily_ritual"],
                 "template": "pain-headline-cta",
+                "concept_lineage": "competitor_pattern",
+                "concept_lineage_ref": "meta-pain",
+                "execution_lineage": "competitor_pattern",
+                "execution_ref": "meta-pain",
+                "brief_ref": "pilot",
+                "concept_id": "morning-relief",
+                "variant_id": "morning-v1",
                 "input_files": [],
             }
         )
-        for role in ("recipe", "research", "template", "app_config"):
-            input_path = self.root / f"{role}.yaml"
-            input_path.write_text(f"role: {role}\n")
-            spec["input_files"].append({"role": role, "path": str(input_path)})
+        recipe_path = self.root / "recipe.yaml"
+        recipe_path.write_text(
+            yaml.safe_dump(
+                {
+                    "brief_ref": spec["brief_ref"],
+                    "concept_id": spec["concept_id"],
+                    "research_refs": spec["research_refs"],
+                    "execution_ref": spec["execution_ref"],
+                    "swiped_from": spec["swiped_from"],
+                },
+                sort_keys=False,
+            )
+        )
+        research_path = self.root / "research.yaml"
+        research_path.write_text(
+            yaml.safe_dump(
+                {
+                    "creatives": [
+                        {
+                            "id": "meta-pain",
+                            "lineage": "competitor_pattern",
+                            "evidence_level": "observed",
+                        }
+                    ]
+                },
+                sort_keys=False,
+            )
+        )
+        brief_path = self.root / "brief.yaml"
+        brief_path.write_text(
+            yaml.safe_dump(
+                {
+                    "id": spec["brief_ref"],
+                    "concepts": [
+                        {
+                            "id": spec["concept_id"],
+                            "lineage": spec["concept_lineage"],
+                            "lineage_ref": spec["concept_lineage_ref"],
+                            "research_refs": spec["research_refs"],
+                        }
+                    ],
+                },
+                sort_keys=False,
+            )
+        )
+        template_path = self.root / "template.yaml"
+        template_path.write_text("role: template\n")
+        app_path = self.root / "app_config.yaml"
+        app_path.write_text("role: app_config\n")
+        spec["input_files"] = [
+            {"role": "recipe", "path": str(recipe_path)},
+            {"role": "research", "path": str(research_path)},
+            {"role": "brief", "path": str(brief_path)},
+            {"role": "template", "path": str(template_path)},
+            {"role": "app_config", "path": str(app_path)},
+        ]
         return spec
 
     def test_missing_output_is_a_blocking_error(self):
@@ -109,19 +192,69 @@ class QualityGateTests(unittest.TestCase):
         report = qa.build_report("sunrise-demo", "batch-1", automated)
 
         with self.assertRaises(ValueError):
-            qa.approve_visual(report, "codex", {"copy_correct": True})
+            approve_visual(report, "codex", {"copy_correct": True})
 
         checks = {name: True for name in qa.VISUAL_CHECKS}
-        approved = qa.approve_visual(report, "codex", checks)
+        approved = approve_visual(report, "codex", checks)
 
         self.assertEqual(approved["visual_status"], "approved")
         self.assertEqual(approved["approved_matrix_digest"], report["matrix_digest"])
+
+    def test_visual_approval_seals_full_resolution_notes_per_artifact(self):
+        path = self.png("full-resolution.png", size=(1080, 1920))
+        report = qa.build_report(
+            "sunrise-demo",
+            "batch-full-resolution",
+            qa.audit_outputs([self.spec(path, size=(1080, 1920))]),
+        )
+        artifact_key = report["records"][0]["artifact_key"]
+        approved = approve_visual(
+            report,
+            "codex",
+            {name: True for name in qa.VISUAL_CHECKS},
+            artifact_reviews=[
+                {
+                    "artifact_key": artifact_key,
+                    "notes": "Opened the original 1080x1920 PNG and inspected copy, edges and safe zones.",
+                }
+            ],
+        )
+
+        self.assertTrue(approved["visual_approval_digest"])
+        self.assertEqual(
+            approved["artifact_reviews"][0]["artifact_key"], artifact_key
+        )
+        tampered = deepcopy(approved)
+        tampered["visual_reviewer"] = ""
+        self.assertTrue(
+            any("visual approval" in error for error in qa.verify_report_files(tampered))
+        )
+
+    def test_visual_approval_rejects_a_forged_artifact_key(self):
+        path = self.png("forged-key.png")
+        report = qa.build_report(
+            "sunrise-demo",
+            "batch-forged-key",
+            qa.audit_outputs([self.spec(path)]),
+        )
+        approved = approve_visual(
+            report,
+            "codex",
+            {name: True for name in qa.VISUAL_CHECKS},
+        )
+        approved["records"][0]["artifact_key"] = "forged-artifact-key"
+        approved["artifact_reviews"][0]["artifact_key"] = "forged-artifact-key"
+        approved["visual_approval_digest"] = qa.visual_approval_digest(approved)
+
+        errors = qa.verify_report_files(approved)
+
+        self.assertTrue(any("artifact_key" in error for error in errors), errors)
 
     def test_changed_file_invalidates_an_existing_approval(self):
         path = self.png("one.png")
         automated = qa.audit_outputs([self.spec(path)])
         report = qa.build_report("sunrise-demo", "batch-1", automated)
-        report = qa.approve_visual(
+        report = approve_visual(
             report,
             "codex",
             {name: True for name in qa.VISUAL_CHECKS},
@@ -134,7 +267,7 @@ class QualityGateTests(unittest.TestCase):
 
     def test_changing_report_app_invalidates_visual_approval(self):
         path = self.png("app-identity.png")
-        report = qa.approve_visual(
+        report = approve_visual(
             qa.build_report(
                 "sunrise-demo",
                 "batch-app-identity",
@@ -153,7 +286,7 @@ class QualityGateTests(unittest.TestCase):
         path = self.png("sealed.png")
         automated = qa.audit_outputs([self.provenance_spec(path)], require_provenance=True)
         report = qa.build_report("sunrise-demo", "batch-sealed", automated)
-        approved = qa.approve_visual(
+        approved = approve_visual(
             report,
             "codex",
             {name: True for name in qa.VISUAL_CHECKS},
@@ -165,14 +298,14 @@ class QualityGateTests(unittest.TestCase):
         self.assertTrue(approved["provenance_required"])
         self.assertEqual(
             {item["role"] for item in approved["records"][0]["input_files"]},
-            {"recipe", "research", "template", "app_config"},
+            {"recipe", "research", "brief", "template", "app_config"},
         )
         self.assertTrue(all(item["sha256"] for item in approved["records"][0]["input_files"]))
 
     def test_changing_any_provenance_file_after_approval_invalidates_it(self):
         path = self.png("file-tamper.png")
         automated = qa.audit_outputs([self.provenance_spec(path)], require_provenance=True)
-        report = qa.approve_visual(
+        report = approve_visual(
             qa.build_report("sunrise-demo", "batch-file-tamper", automated),
             "codex",
             {name: True for name in qa.VISUAL_CHECKS},
@@ -192,7 +325,7 @@ class QualityGateTests(unittest.TestCase):
     def test_changing_embedded_provenance_after_approval_invalidates_it(self):
         path = self.png("metadata-tamper.png")
         automated = qa.audit_outputs([self.provenance_spec(path)], require_provenance=True)
-        approved = qa.approve_visual(
+        approved = approve_visual(
             qa.build_report("sunrise-demo", "batch-metadata-tamper", automated),
             "codex",
             {name: True for name in qa.VISUAL_CHECKS},
@@ -217,7 +350,7 @@ class QualityGateTests(unittest.TestCase):
 
     def test_removing_input_digest_cannot_downgrade_an_approved_report(self):
         path = self.png("digest-removal.png")
-        approved = qa.approve_visual(
+        approved = approve_visual(
             qa.build_report(
                 "sunrise-demo",
                 "batch-digest-removal",
@@ -243,7 +376,7 @@ class QualityGateTests(unittest.TestCase):
 
     def test_stripping_both_digests_and_part_of_provenance_still_blocks(self):
         path = self.png("stripped-provenance.png")
-        approved = qa.approve_visual(
+        approved = approve_visual(
             qa.build_report(
                 "sunrise-demo",
                 "batch-stripped-provenance",
@@ -266,7 +399,7 @@ class QualityGateTests(unittest.TestCase):
 
         self.assertTrue(any("input digest" in error for error in errors))
         with self.assertRaisesRegex(ValueError, "input digest"):
-            qa.approve_visual(
+            approve_visual(
                 approved,
                 "codex",
                 {name: True for name in qa.VISUAL_CHECKS},
@@ -282,7 +415,7 @@ class QualityGateTests(unittest.TestCase):
         report.pop("input_digest")
 
         with self.assertRaisesRegex(ValueError, "input digest"):
-            qa.approve_visual(
+            approve_visual(
                 report,
                 "codex",
                 {name: True for name in qa.VISUAL_CHECKS},
@@ -290,7 +423,7 @@ class QualityGateTests(unittest.TestCase):
 
     def test_publish_metadata_changes_invalidate_visual_approval(self):
         path = self.png("publish-metadata.png")
-        approved = qa.approve_visual(
+        approved = approve_visual(
             qa.build_report(
                 "sunrise-demo",
                 "batch-publish-metadata",
@@ -320,7 +453,7 @@ class QualityGateTests(unittest.TestCase):
 
     def test_retargeting_a_sealed_input_to_a_symlink_is_rejected(self):
         path = self.png("symlink-retarget.png")
-        approved = qa.approve_visual(
+        approved = approve_visual(
             qa.build_report(
                 "sunrise-demo",
                 "batch-symlink-retarget",
@@ -354,16 +487,17 @@ class QualityGateTests(unittest.TestCase):
         second_dir = self.root / "second-inputs"
         first_dir.mkdir()
         second_dir.mkdir()
-        for directory in (first_dir, second_dir):
-            (directory / "recipe.yaml").write_text("role: recipe\n")
-        linked_dir = self.root / "linked-inputs"
-        linked_dir.symlink_to(first_dir, target_is_directory=True)
         spec = self.provenance_spec(path)
         recipe_input = next(
             item for item in spec["input_files"] if item["role"] == "recipe"
         )
+        recipe_bytes = Path(recipe_input["path"]).read_bytes()
+        for directory in (first_dir, second_dir):
+            (directory / "recipe.yaml").write_bytes(recipe_bytes)
+        linked_dir = self.root / "linked-inputs"
+        linked_dir.symlink_to(first_dir, target_is_directory=True)
         recipe_input["path"] = str(linked_dir / "recipe.yaml")
-        approved = qa.approve_visual(
+        approved = approve_visual(
             qa.build_report(
                 "sunrise-demo",
                 "batch-symlink-directory-retarget",
@@ -460,7 +594,7 @@ class QualityGateTests(unittest.TestCase):
         with mock.patch.object(qa, "sha256", wraps=qa.sha256) as digest:
             qa.audit_outputs([first, second], require_provenance=True)
 
-        self.assertEqual(digest.call_count, 6)
+        self.assertEqual(digest.call_count, 7)
 
     def test_story_safe_zone_contract_requires_top_and_bottom_margins(self):
         errors = qa.validate_safe_zones({"safe_zones": {"story": {"top": 220}}})

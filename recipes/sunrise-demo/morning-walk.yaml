@@ -7,6 +7,7 @@ target_platforms: [meta]
 asset_refs: [sunrise-icon, sunrise-sun-mascot]
 swiped_from: "StrideCo (fictional) — pain-to-peace morning walk"
 research_refs: [demo-0000000000000001]
+execution_ref: demo-0000000000000001
 claims_used: [daily_walk, daily_free, no_account]
 
 ad_copy:

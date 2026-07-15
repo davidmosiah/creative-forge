@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from PIL import Image
+
 from scripts import render
 
 
@@ -33,6 +35,97 @@ class RenderSafetyTests(unittest.TestCase):
                     render.screenshot("<html></html>", 10, 10, out, timeout_seconds=0.05)
 
             self.assertEqual(out.read_bytes(), b"known-good-old-output")
+
+    def test_parallel_chrome_jobs_use_isolated_ephemeral_profiles(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fake_chrome = root / "chrome"
+            fixture = root / "fixture.png"
+            Image.new("RGB", (10, 10), "white").save(fixture)
+            arguments = root / "arguments.txt"
+            fake_chrome.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' \"$@\" > '{arguments}'\n"
+                "for arg in \"$@\"; do\n"
+                "  case \"$arg\" in --screenshot=*) out=${arg#*=};; esac\n"
+                "done\n"
+                f"cp '{fixture}' \"$out\"\n"
+            )
+            fake_chrome.chmod(0o755)
+            out = root / "creative.png"
+
+            with mock.patch.object(render, "CHROME", str(fake_chrome)):
+                render.screenshot("<html></html>", 10, 10, out)
+
+            command = arguments.read_text().splitlines()
+            self.assertTrue(
+                any(item.startswith("--user-data-dir=") for item in command),
+                command,
+            )
+            self.assertIn("--no-first-run", command)
+
+    def test_valid_screenshot_survives_a_lingering_chrome_process(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fixture = root / "fixture.png"
+            Image.new("RGB", (10, 10), "white").save(fixture)
+            fake_chrome = root / "lingering-chrome"
+            fake_chrome.write_text(
+                "#!/bin/sh\n"
+                "for arg in \"$@\"; do\n"
+                "  case \"$arg\" in --screenshot=*) out=${arg#*=};; esac\n"
+                "done\n"
+                f"cp '{fixture}' \"$out\"\n"
+                "sleep 5\n"
+            )
+            fake_chrome.chmod(0o755)
+            out = root / "creative.png"
+
+            with mock.patch.object(render, "CHROME", str(fake_chrome)):
+                render.screenshot(
+                    "<html></html>",
+                    10,
+                    10,
+                    out,
+                    timeout_seconds=2,
+                )
+
+            self.assertTrue(out.is_file())
+            with Image.open(out) as image:
+                self.assertEqual(image.size, (10, 10))
+
+    def test_renderer_cannot_deadlock_when_chrome_emits_large_diagnostics(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fixture = root / "fixture.png"
+            Image.new("RGB", (10, 10), "white").save(fixture)
+            fake_chrome = root / "noisy-chrome"
+            fake_chrome.write_text(
+                "#!/bin/sh\n"
+                "for arg in \"$@\"; do\n"
+                "  case \"$arg\" in --screenshot=*) out=${arg#*=};; esac\n"
+                "done\n"
+                "i=0\n"
+                "while [ $i -lt 2048 ]; do\n"
+                "  printf 'chrome diagnostic line that fills the pipe buffer\\n' >&2\n"
+                "  i=$((i + 1))\n"
+                "done\n"
+                f"cp '{fixture}' \"$out\"\n"
+            )
+            fake_chrome.chmod(0o755)
+            out = root / "creative.png"
+
+            with mock.patch.object(render, "CHROME", str(fake_chrome)):
+                render.screenshot(
+                    "<html></html>",
+                    10,
+                    10,
+                    out,
+                    timeout_seconds=3,
+                )
+
+            with Image.open(out) as image:
+                self.assertEqual(image.size, (10, 10))
 
     def test_plain_template_values_are_html_escaped_but_raw_values_are_not(self):
         html = "<p>{{ copy.headline }}</p><div>{{{ mascot }}}</div>"
@@ -202,6 +295,33 @@ class RenderSafetyTests(unittest.TestCase):
             render.normalize_jobs(0)
         with self.assertRaises(ValueError):
             render.normalize_jobs(9)
+        with (
+            mock.patch.object(render.sys, "platform", "darwin"),
+            mock.patch.dict(
+                os.environ,
+                {"CREATIVE_FORGE_CHROME_MAX_PARALLEL": ""},
+                clear=False,
+            ),
+        ):
+            self.assertEqual(render.effective_chrome_jobs(4), 1)
+        with (
+            mock.patch.object(render.sys, "platform", "linux"),
+            mock.patch.dict(
+                os.environ,
+                {"CREATIVE_FORGE_CHROME_MAX_PARALLEL": ""},
+                clear=False,
+            ),
+        ):
+            self.assertEqual(render.effective_chrome_jobs(4), 4)
+        with (
+            mock.patch.object(render.sys, "platform", "darwin"),
+            mock.patch.dict(
+                os.environ,
+                {"CREATIVE_FORGE_CHROME_MAX_PARALLEL": "2"},
+                clear=False,
+            ),
+        ):
+            self.assertEqual(render.effective_chrome_jobs(4), 2)
 
 
 if __name__ == "__main__":

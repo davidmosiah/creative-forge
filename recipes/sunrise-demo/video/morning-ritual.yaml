@@ -15,6 +15,7 @@ audio_strategy: intentional_silence
 safe_zones: {top: 0.14, bottom: 0.20}
 claims_used: [daily_walk, daily_free]
 research_refs: [demo-0000000000000003]
+execution_ref: demo-0000000000000003
 asset_refs: [sunrise-sun-mascot]
 references:
   - id: demo-0000000000000003

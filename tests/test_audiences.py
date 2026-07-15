@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from scripts import audiences, publish, qa
+from tests.qa_fixtures import approve_report, production_report
 
 
 def make_markets():
@@ -153,12 +154,10 @@ class AudiencePlanAuditTests(unittest.TestCase):
 class PublishAudienceGateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         image = self.root / "creative.png"
         Image.new("RGB", (1080, 1080), "white").save(image)
-        automated = qa.audit_outputs(
-            [
-                {
+        spec = {
                     "path": str(image),
                     "recipe": "morning",
                     "format": "square",
@@ -179,12 +178,13 @@ class PublishAudienceGateTests(unittest.TestCase):
                     },
                     "cta": "Baixe grátis",
                 }
-            ]
+        report = production_report(
+            self.root,
+            "sunrise-demo",
+            "batch-1",
+            [spec],
         )
-        report = qa.build_report("sunrise-demo", "batch-1", automated)
-        self.report = qa.approve_visual(
-            report, "claude", {name: True for name in qa.VISUAL_CHECKS}
-        )
+        self.report = approve_report(report, "claude")
         self.capabilities = {
             "provider": "meta_ads_mcp",
             "agent": "claude",
@@ -255,6 +255,7 @@ class PublishAudienceGateTests(unittest.TestCase):
             briefs=self.briefs,
             readiness_receipt=self.readiness_receipt,
             evidence_root=self.root,
+            workspace_root=self.root,
             now=self.now,
         )
 

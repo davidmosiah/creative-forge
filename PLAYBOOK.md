@@ -1,7 +1,6 @@
 # PLAYBOOK — creative-forge
 
-This is the shared Codex/Claude/human procedure. This file contains the operating contract.
-The evidence and design rationale are in
+This is the shared Codex/Claude/human procedure and operating contract.
 
 ## Operating boundary
 
@@ -19,6 +18,12 @@ an ad performed.
 Paid generation and external writes require human or explicit task
 authorization. Activation, budget and spend always require a separate explicit
 human confirmation.
+
+**Creative Latitude:** be strict on truth, rights, provenance, claims, spend,
+and external state. Be expansive on concepts, hooks, copy, composition,
+scenes, pacing, formats, and visual language. A validator may verify what a
+concept claims to derive from; it must never decide whether the creative leap
+is good enough.
 
 ## Canonical 12-stage workflow
 
@@ -53,10 +58,10 @@ human confirmation.
 The image workflow and local video workflow are executable. Brief, asset and
 experiment validators, both video-mining modes, pinned Remotion, atomic render,
 render receipts bound to props/engine/output, localized VO with rendered SRT
-captions, FFprobe/FFmpeg checks, sealed run locks and per-artifact playback
-receipts are implemented. A real mute-safe Sunrise Walks pt-BR render passed
-typecheck, H.264/yuv420p/30fps/BT.709/AAC stereo 44.1 kHz checks and agent visual
-QA. `providers.yaml` therefore marks Remotion `production_local`. Meta video
+captions, FFprobe/FFmpeg checks, one native-resolution midpoint frame per
+scene, sealed run locks and per-artifact playback receipts are implemented.
+The bundled fictional Sunrise Walks en-US proof exercises that path in CI.
+`providers.yaml` therefore marks Remotion `production_local`. Meta video
 upload/processing/`PAUSED` readback, CPP live state and RevenueCat live state
 remain capability-gated. Never improvise a provider schema, external ID or
 success receipt.
@@ -75,7 +80,7 @@ npm run typecheck
 cd ..
 python3 scripts/video.py audit-recipe --app sunrise-demo --recipe morning-ritual
 python3 scripts/forge.py build-video \
-  --app sunrise-demo --recipe morning-ritual --locale pt-BR --batch-id <batch>
+  --app sunrise-demo --recipe morning-ritual --locale en-US --batch-id <batch>
 ```
 
 Commit the intended code/config first. Playback QA deliberately refuses a dirty
@@ -140,16 +145,21 @@ python3 scripts/locales.py --app <app>
 python3 scripts/signals.py --app <app>
 ```
 
-## 3. Adapt into recipes
+## 3. Turn evidence into agent-authored recipes
 
-For the current image path, choose a template matching the observed competitor
-pattern. A production recipe contains:
+Every concept declares one `lineage_ref` inside its own `research_refs`. That
+anchors the idea's provenance. A recipe may independently select an
+`execution_ref` from its `research_refs` for a format or audiovisual pattern;
+the two references may have different lineages. This lets an own-winner thesis
+use an observed video grammar without relabeling either source. A production
+recipe contains:
 
 ```yaml
 template: pain-headline-cta
 format: square
 swiped_from: "StrideCo (fictional) ES — pain to peace"
 research_refs: [demo-0000000000000001]
+execution_ref: demo-0000000000000001
 claims_used: [daily_ritual, daily_free]
 target_markets: [br, mexico, spain]
 ad_copy:
@@ -180,15 +190,23 @@ require a genuine review plus verifiable source URL. Drafts live under
 Each market ID must use a unique `storefront_locale`; duplicate storefront
 locales are blocked because output and QA paths use that canonical locale.
 
-**Swipe fidelity is enforced for the current image path:** the chosen template
-must materialize at least one cited competitor pattern's angle
-(`swipe_angles` in the template's `meta.yaml`, matched
-against `angle` in `swipe/<app>/competitors.yaml`). A creative that doesn't
-derive from cited evidence is blocked at preflight. This is traceability, not a
-claim that a competitor ad won. To use a template with no matching pattern,
-record suitable evidence first. Customer-insight, trend, exploratory and
-own-winner concepts use the implemented brief/concept contract; the current
-image templates still retain their competitor-pattern alignment gate.
+The concept provenance gate is lineage-aware:
+
+- `competitor_pattern` requires a traceable competitor anchor, but does not
+  force the recipe to copy its structure;
+- `own_winner` requires a real own-performance anchor with metrics;
+- `customer_insight` and `trend` require an anchor with that honest lineage;
+- `exploratory` may anchor any traceable evidence and make an original leap.
+
+The recipe's execution gate is separate. `execution_ref` may select a
+format/audiovisual reference from another lineage. Structural fidelity is
+required only when that explicitly selected execution record is
+`competitor_pattern`; omitting `execution_ref` declares an original execution,
+so template, composition, hook, and pacing remain agent decisions.
+For video, an original execution also omits structural `references`; when an
+`execution_ref` is selected, the inline `references` list covers exactly that
+verified audiovisual pattern, not every source behind the concept.
+Claims, rights, locales, and provenance remain hard gates for every lineage.
 
 Higgsfield lifestyle/video shots may use the MCP only when the active agent can
 prove a provider-enforced cost ceiling and reconcile the actual job cost. The
@@ -223,29 +241,54 @@ Preflight blocks stale/missing research, stale/missing signals, locale drift,
 unknown research references, unsupported claims, missing assets, placeholders,
 CTA policy errors and incomplete copy languages. Rendering is atomic: a failed or
 timed-out Chrome process cannot reuse a stale PNG.
+On macOS, Chrome launches are serialized by default for reliability; only set
+`CREATIVE_FORGE_CHROME_MAX_PARALLEL` after proving parallel renders locally.
 
 ## 5. Automated and visual QA
 
-`build` creates a QA report and contact sheets. Open every sheet. Inspect copy,
+`build` creates a QA report and contact sheets. Use each sheet only as an
+index, then open every original PNG at native resolution. Inspect copy,
 language, spelling, readability, wrapping, contrast, image artifacts/anatomy,
-truthfulness, brand consistency, platform safe zones and **swipe fidelity**
-(open the cited patterns' hook/`source_url` in `swipe/<app>/competitors.yaml`
-and confirm each creative follows that structure — never their literal art).
+truthfulness, brand consistency, platform safe zones and lineage fidelity.
+For competitor-pattern execution, that includes structural fidelity; for
+original execution, it means fidelity to the agent-authored hypothesis and
+concept anchor, not similarity to a competitor.
 
 Only after real inspection:
 
 ```bash
-python3 scripts/qa.py approve --report <report.json> --reviewer <agent> --confirm-all
 python3 scripts/qa.py status --report <report.json>
+python3 scripts/qa.py approve --report <report.json> --reviewer <agent> \
+  --review-file <qa-review.json>
+python3 scripts/qa.py status --report <report.json>
+```
+
+`qa-review.json` lists every required check plus one non-empty note for every
+`artifact_key`. Reviewer, timestamp, checks, notes, dimensions, paths and
+hashes are sealed; changing any of them invalidates approval.
+
+```json
+{
+  "checks": ["copy_correct", "readable", "imagery_consistent", "claims_truthful", "safe_zones", "no_artifacts", "lineage_fidelity"],
+  "artifact_reviews": [
+    {"artifact_key": "<from qa.py status>", "notes": "What was inspected in the original PNG."}
+  ]
+}
 ```
 
 Changing one PNG invalidates approval.
 
 For video, the same rule becomes per-artifact playback QA: inspect the whole
-file and, when audio exists, review with sound and muted; inspect captions, hook, rhythm, scene
+file plus every sealed native-resolution scene frame and, when audio exists,
+review with sound and muted; inspect captions, hook, rhythm, scene
 transitions, anatomy/artifacts, copy, truth, cultural fit and platform UI
 occlusion. FFprobe/FFmpeg may validate timing/encoding/black or silent segments;
 they do not approve aesthetics or meaning.
+
+Video approval uses a separate review JSON with `notes` plus the complete
+`PLAYBACK_CHECKS` list, passed through `--review-file`. The contact sheet and
+scene frames help inspection; only watching the complete MP4 proves rhythm,
+transitions, sound intent, and full-timeline behavior.
 
 ## 6. Audience plan, then publish as PAUSED
 
@@ -260,7 +303,8 @@ python3 scripts/audiences.py --app <app>
 ```
 
 Discover exact Meta Ads MCP schemas and create a capability receipt that names
-a real readback tool distinct from create. Query the live destination (default
+a real read-only tool distinct from every create/update/delete/write action.
+Query the live destination (default
 App Store page, CPP or landing page) and save `readiness.json` with response
 digest. Save the exact raw response under ignored `runs/live-readbacks/`; every
 receipt must bind its repository-relative `response_path` and real sha256.
@@ -291,7 +335,7 @@ The normalized provider result inside the envelope must repeat and agree with
 those fields; contradictory `ACTIVE` or unrelated responses fail:
 
 ```bash
-python3 scripts/publish.py verify-receipt --manifest <manifest.json> --receipt <receipt.json>
+python3 scripts/publish.py verify-receipt --app <app> --manifest <manifest.json> --receipt <receipt.json>
 ```
 
 Use the deterministic `creative_name`, `ad_name` and `item_key` from the manifest

@@ -41,6 +41,15 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("nunca ativar", self.text)
         self.assertIn("gasto", self.text)
 
+    def test_skill_preserves_creative_latitude_and_rejects_rubber_stamp_qa(self):
+        self.assertIn("Creative Latitude", self.text)
+        self.assertIn("concept and execution provenance distinct", self.text)
+        self.assertIn("Only competitor-pattern execution", self.text)
+        self.assertIn("execution_ref", self.text)
+        self.assertIn("hook, composition, copy, scene plan, pacing", self.text)
+        self.assertIn("--review-file", self.text)
+        self.assertNotIn("--confirm-all", self.text)
+
     def test_installer_targets_both_agent_skill_directories(self):
         installer = (self.root / "scripts" / "install-skill.sh").read_text()
         self.assertIn(".codex/skills/criar-criativos", installer)

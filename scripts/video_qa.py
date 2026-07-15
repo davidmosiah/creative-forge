@@ -12,10 +12,14 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
+from PIL import Image
+
 try:
-    from scripts import paths as workspace_paths, video
+    from scripts import briefs, paths as workspace_paths, research, video
 except ImportError:
+    import briefs
     import paths as workspace_paths
+    import research
     import video
 
 ROOT = workspace_paths.default_root()
@@ -29,7 +33,7 @@ PLAYBACK_CHECKS = (
     "claims_truthful",
     "cultural_fit",
     "safe_zones",
-    "swipe_fidelity",
+    "lineage_fidelity",
 )
 SOUND_STRATEGIES = {
     "intentional_silence",
@@ -37,6 +41,23 @@ SOUND_STRATEGIES = {
     "voiceover",
     "music_and_voiceover",
 }
+ARTIFACT_REQUIRED_FIELDS = (
+    "market_id",
+    "locale",
+    "copy_language",
+    "format",
+    "duration_seconds",
+    "audio_strategy",
+    "technical_status",
+    "brief_ref",
+    "concept_id",
+    "concept_lineage",
+    "concept_lineage_ref",
+    "execution_lineage",
+    "variant_id",
+    "width",
+    "height",
+)
 SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,127})$")
 COMMAND_TIMEOUT_SECONDS = 120
 
@@ -176,9 +197,462 @@ def artifact_key(app: str, batch_id: str, artifact: dict) -> str:
             "format": artifact.get("format"),
             "brief_ref": artifact.get("brief_ref"),
             "concept_id": artifact.get("concept_id"),
+            "concept_lineage": artifact.get("concept_lineage"),
+            "concept_lineage_ref": artifact.get("concept_lineage_ref"),
+            "execution_lineage": artifact.get("execution_lineage"),
+            "execution_ref": artifact.get("execution_ref"),
             "variant_id": artifact.get("variant_id"),
         }
     )[:20]
+
+
+def scene_frame_plan(props: dict) -> list[dict]:
+    """Return one deterministic midpoint frame for every agent-authored scene."""
+    fps = props.get("fps")
+    if not isinstance(fps, (int, float)) or isinstance(fps, bool) or fps <= 0:
+        raise ValueError("props.fps precisa ser positivo")
+    scenes = props.get("scenes")
+    if not isinstance(scenes, list) or not scenes:
+        raise ValueError("props.scenes precisa ser uma lista não vazia")
+    plan, seen = [], set()
+    for index, scene in enumerate(scenes):
+        if not isinstance(scene, dict):
+            raise ValueError(f"props.scenes[{index}] inválida")
+        scene_id = scene.get("id")
+        start = scene.get("startFrame")
+        duration = scene.get("durationInFrames")
+        if not isinstance(scene_id, str) or not scene_id.strip() or scene_id in seen:
+            raise ValueError(f"scene id ausente ou duplicado: {scene_id}")
+        if not isinstance(start, int) or isinstance(start, bool) or start < 0:
+            raise ValueError(f"scene {scene_id} startFrame inválido")
+        if not isinstance(duration, int) or isinstance(duration, bool) or duration <= 0:
+            raise ValueError(f"scene {scene_id} durationInFrames inválido")
+        seen.add(scene_id)
+        frame = start + (duration - 1) // 2
+        plan.append(
+            {
+                "scene_id": scene_id,
+                "frame": frame,
+                "time_seconds": frame / float(fps),
+            }
+        )
+    return plan
+
+
+def scene_plan_from_inputs(input_files: list[dict]) -> list[dict]:
+    props_inputs = [
+        item for item in input_files if item.get("role") == "render_props"
+    ]
+    if len(props_inputs) != 1:
+        raise ValueError("run lock exige exatamente um input render_props")
+    path = Path(str(props_inputs[0].get("path") or ""))
+    try:
+        props = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"render_props inválido: {exc}") from exc
+    if not isinstance(props, dict):
+        raise ValueError("render_props precisa ser objeto JSON")
+    return scene_frame_plan(props)
+
+
+def scene_evidence_metadata_errors(
+    artifact: dict,
+    expected_plan: list[dict],
+) -> list[str]:
+    errors = []
+    expected_ids = [item["scene_id"] for item in expected_plan]
+    if artifact.get("scene_ids") != expected_ids:
+        errors.append("scene_ids divergem dos midpoints de render_props")
+    evidence = artifact.get("scene_evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return [*errors, "artifact sem scene_evidence full-resolution"]
+    evidence_ids = [
+        item.get("scene_id") if isinstance(item, dict) else None for item in evidence
+    ]
+    valid_ids = all(isinstance(item, str) and item for item in evidence_ids)
+    if (
+        not valid_ids
+        or len(evidence_ids) != len(set(evidence_ids))
+        or set(evidence_ids) != set(expected_ids)
+    ):
+        errors.append("scene_evidence não cobre exatamente todos os scene_ids")
+        return errors
+    expected_by_id = {item["scene_id"]: item for item in expected_plan}
+    seen_paths = []
+    for item in evidence:
+        expected = expected_by_id[item["scene_id"]]
+        if item.get("frame") != expected["frame"]:
+            errors.append(
+                f"scene frame {item['scene_id']} diverge do midpoint de render_props"
+            )
+        actual_time = item.get("time_seconds")
+        if (
+            not isinstance(actual_time, (int, float))
+            or isinstance(actual_time, bool)
+            or abs(float(actual_time) - expected["time_seconds"]) > 1e-9
+        ):
+            errors.append(
+                f"scene frame {item['scene_id']} time_seconds diverge do midpoint"
+            )
+        path = str(item.get("path") or "")
+        if not path:
+            errors.append(f"scene frame {item['scene_id']} sem path")
+        seen_paths.append(path)
+    if len(seen_paths) != len(set(seen_paths)):
+        errors.append("scene_evidence reutiliza o mesmo arquivo em cenas diferentes")
+    return errors
+
+
+def seal_scene_evidence(
+    artifact: dict,
+    expected_plan: list[dict],
+) -> list[dict]:
+    metadata_errors = scene_evidence_metadata_errors(artifact, expected_plan)
+    if metadata_errors:
+        raise ValueError("; ".join(metadata_errors))
+    evidence = artifact["scene_evidence"]
+    expected_size = (artifact.get("width"), artifact.get("height"))
+    sealed_evidence = []
+    for item in evidence:
+        sealed = seal_file(
+            {**item, "role": "qa_scene_frame"}, kind="input"
+        )
+        path = Path(sealed["path"])
+        try:
+            with Image.open(path) as image:
+                actual_size = image.size
+        except Exception as exc:
+            raise ValueError(f"scene frame inválido {path}: {exc}") from exc
+        if actual_size != expected_size:
+            raise ValueError(
+                f"scene frame {item.get('scene_id')} dimensão {actual_size} "
+                f"diverge do vídeo {expected_size}"
+            )
+        sealed["width"], sealed["height"] = actual_size
+        sealed_evidence.append(sealed)
+    return sealed_evidence
+
+
+def _first_symlink_component(path: Path, root: Path) -> Path | None:
+    candidate = lexical_absolute(path)
+    root = lexical_absolute(root)
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return candidate
+    cursor = Path(candidate.anchor)
+    for part in candidate.parts[1:]:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return cursor
+    return None
+
+
+def canonical_video_input_errors(
+    *,
+    app: str,
+    input_files: list[dict],
+    artifacts: list[dict],
+    git_state: dict,
+) -> list[str]:
+    """Bind video lineage inputs and artifacts to canonical workspace paths."""
+    errors = []
+    root_value = git_state.get("repository_root") if isinstance(git_state, dict) else None
+    if not root_value:
+        return ["video core inputs sem repository_root canônico"]
+    root = lexical_absolute(root_value)
+    if not isinstance(app, str) or not SAFE_SEGMENT_RE.fullmatch(app):
+        return [f"video app inválido para path canônico: {app!r}"]
+    root_symlink = _first_symlink_component(root, root)
+    if root_symlink is not None:
+        errors.append(f"video repository root usa symlink: {root_symlink}")
+
+    recipe_inputs = [
+        item
+        for item in input_files
+        if isinstance(item, dict) and item.get("role") == "recipe"
+    ]
+    if len(recipe_inputs) != 1:
+        return [*errors, "video core input recipe precisa ser único e canônico"]
+    recipe_path_value = recipe_inputs[0].get("path")
+    if not isinstance(recipe_path_value, (str, os.PathLike)):
+        return [*errors, "video core input recipe path authored inválido"]
+    recipe_authored_path = os.fspath(recipe_path_value)
+    recipe_authored = Path(recipe_authored_path)
+    if (
+        not recipe_authored.is_absolute()
+        or any(part in {".", ".."} for part in recipe_authored.parts)
+    ):
+        return [*errors, "video core input recipe path authored não é canônico"]
+    recipe_path = lexical_absolute(recipe_authored_path)
+    canonical_recipe_dir = root / "recipes" / app / "video"
+    recipe_name = recipe_path.stem
+    expected_recipe_path = canonical_recipe_dir / f"{recipe_name}.yaml"
+    if (
+        recipe_path.parent != canonical_recipe_dir
+        or recipe_path.suffix != ".yaml"
+        or not SAFE_SEGMENT_RE.fullmatch(recipe_name)
+        or recipe_authored_path != str(expected_recipe_path)
+    ):
+        errors.append(
+            f"video core input recipe não é canônico: {recipe_path} não pertence "
+            f"a {canonical_recipe_dir}"
+        )
+        return errors
+    recipe_symlink = _first_symlink_component(recipe_path, root)
+    if recipe_symlink is not None:
+        errors.append(
+            f"video core input recipe usa symlink ancestral não canônico: {recipe_symlink}"
+        )
+    try:
+        recipe = video.load_yaml(recipe_path)
+    except video.VideoError as exc:
+        return [*errors, f"video recipe canônica inválida: {exc}"]
+    brief_ref = recipe.get("brief_ref")
+    if not isinstance(brief_ref, str) or not SAFE_SEGMENT_RE.fullmatch(brief_ref):
+        return [*errors, f"video brief_ref inválido para path canônico: {brief_ref!r}"]
+
+    role_paths = (
+        ("brief", root / "briefs" / app / f"{brief_ref}.yaml", True),
+        (
+            "video_patterns",
+            root / "swipe" / app / "video-patterns.yaml",
+            False,
+        ),
+        ("research", root / "swipe" / app / "competitors.yaml", False),
+        ("app_config", root / "apps" / f"{app}.yaml", False),
+    )
+    for role, expected_path, required in role_paths:
+        matches = [
+            item
+            for item in input_files
+            if isinstance(item, dict) and item.get("role") == role
+        ]
+        if not matches:
+            if required:
+                errors.append(f"video core input {role} canônico ausente")
+            continue
+        if len(matches) != 1:
+            errors.append(f"video core input {role} precisa ser único e canônico")
+            continue
+        path_value = matches[0].get("path")
+        if not isinstance(path_value, (str, os.PathLike)):
+            errors.append(f"video core input {role} path authored inválido")
+            continue
+        authored_path = os.fspath(path_value)
+        authored = Path(authored_path)
+        canonical_expected = lexical_absolute(expected_path)
+        if (
+            not authored.is_absolute()
+            or any(part in {".", ".."} for part in authored.parts)
+            or authored_path != str(canonical_expected)
+        ):
+            errors.append(
+                f"video core input {role} path authored não é canônico: "
+                f"{authored_path!r} != {str(canonical_expected)!r}"
+            )
+            continue
+        symlink = _first_symlink_component(canonical_expected, root)
+        if symlink is not None:
+            errors.append(
+                f"video core input {role} usa symlink ancestral não canônico: {symlink}"
+            )
+
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            errors.append("video artifact inválido para path canônico")
+            continue
+        try:
+            expected_path = expected_video_path(
+                root,
+                app,
+                recipe_name,
+                artifact.get("locale"),
+                artifact.get("format"),
+            )
+        except (TypeError, ValueError) as exc:
+            errors.append(f"video artifact sem path canônico: {exc}")
+            continue
+        artifact_path_value = artifact.get("path")
+        if not isinstance(artifact_path_value, (str, os.PathLike)):
+            errors.append("video artifact path authored inválido")
+            continue
+        artifact_authored_path = os.fspath(artifact_path_value)
+        artifact_authored = Path(artifact_authored_path)
+        actual_path = lexical_absolute(artifact_authored_path)
+        if (
+            not artifact_authored.is_absolute()
+            or any(part in {".", ".."} for part in artifact_authored.parts)
+            or artifact_authored_path != str(expected_path)
+            or actual_path != expected_path
+        ):
+            errors.append(
+                f"video artifact não é canônico para recipe {recipe_name}: "
+                f"{actual_path} != {expected_path}"
+            )
+    return errors
+
+
+def _lineage_input_yaml(
+    input_files: list[dict],
+    role: str,
+    *,
+    required: bool,
+) -> tuple[dict | None, list[str]]:
+    matches = [
+        item
+        for item in input_files
+        if isinstance(item, dict) and item.get("role") == role
+    ]
+    if not matches:
+        if required:
+            return None, [f"run lock sem input {role} para validar lineage"]
+        return {}, []
+    if len(matches) != 1:
+        return None, [f"run lock exige no máximo um input {role} para lineage"]
+    try:
+        return video.load_yaml(
+            lexical_absolute(str(matches[0].get("path") or ""))
+        ), []
+    except (OSError, video.VideoError) as exc:
+        return None, [f"run lock input {role} inválido para lineage: {exc}"]
+
+
+def video_lineage_contract_errors(
+    input_files: list[dict],
+    artifacts: list[dict],
+) -> list[str]:
+    """Rebind sealed artifact labels to the sealed recipe/brief/research truth."""
+    errors = []
+    recipe, input_errors = _lineage_input_yaml(
+        input_files, "recipe", required=True
+    )
+    errors.extend(input_errors)
+    brief, input_errors = _lineage_input_yaml(
+        input_files, "brief", required=True
+    )
+    errors.extend(input_errors)
+    patterns, input_errors = _lineage_input_yaml(
+        input_files, "video_patterns", required=False
+    )
+    errors.extend(input_errors)
+    competitors, input_errors = _lineage_input_yaml(
+        input_files, "research", required=False
+    )
+    errors.extend(input_errors)
+    if recipe is None or brief is None or patterns is None or competitors is None:
+        return errors
+
+    research_by_id, registry_errors = video.merge_research_registries(
+        patterns,
+        competitors,
+    )
+    errors.extend(registry_errors)
+
+    brief_ref = recipe.get("brief_ref")
+    if not brief_ref or brief_ref != brief.get("id"):
+        errors.append(
+            f"video lineage brief_ref {brief_ref!r} diverge do brief {brief.get('id')!r}"
+        )
+    concept_id = recipe.get("concept_id")
+    concepts = {
+        item.get("id"): item
+        for item in brief.get("concepts", []) or []
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    concept = concepts.get(concept_id)
+    if concept is None:
+        errors.append(
+            f"video lineage concept_id {concept_id!r} não existe no brief selado"
+        )
+        return errors
+
+    concept_lineage = concept.get("lineage")
+    concept_lineage_ref = concept.get("lineage_ref")
+    if concept_lineage not in research.ALLOWED_LINEAGE:
+        errors.append(f"video concept lineage inválida: {concept_lineage}")
+    concept_refs_value = concept.get("research_refs")
+    if not isinstance(concept_refs_value, list) or not all(
+        isinstance(item, str) and item for item in concept_refs_value
+    ):
+        errors.append("video concept research_refs inválidas para lineage")
+        concept_refs = set()
+    else:
+        concept_refs = set(concept_refs_value)
+    recipe_refs_value = recipe.get("research_refs")
+    if not isinstance(recipe_refs_value, list) or not all(
+        isinstance(item, str) and item for item in recipe_refs_value
+    ):
+        errors.append("video recipe research_refs inválidas para lineage")
+        recipe_refs = set()
+    else:
+        recipe_refs = set(recipe_refs_value)
+    if not recipe_refs.issubset(concept_refs):
+        errors.append("video recipe research_refs divergem do concept selado")
+    for ref in sorted(concept_refs | recipe_refs):
+        if ref not in research_by_id:
+            errors.append(f"video lineage research_ref inexistente: {ref}")
+    if not isinstance(concept_lineage_ref, str) or not concept_lineage_ref:
+        errors.append("video concept sem lineage_ref selada")
+        concept_anchor = None
+    else:
+        if concept_lineage_ref not in concept_refs:
+            errors.append("video concept lineage_ref não está em research_refs")
+        concept_anchor = research_by_id.get(concept_lineage_ref)
+        if concept_anchor is None:
+            errors.append(
+                f"video concept lineage_ref inexistente: {concept_lineage_ref}"
+            )
+    if concept_anchor is not None and concept_lineage != "exploratory":
+        if concept_anchor.get("lineage") != concept_lineage:
+            errors.append(
+                "video concept lineage diverge da lineage_ref selada: "
+                f"{concept_lineage} != {concept_anchor.get('lineage')}"
+            )
+        if concept_lineage == "own_winner" and (
+            concept_anchor.get("evidence_level") != "performance_data"
+            or not concept_anchor.get("performance_metrics")
+        ):
+            errors.append(
+                "video concept own_winner exige lineage_ref com performance_data "
+                "e performance_metrics"
+            )
+
+    execution_ref = recipe.get("execution_ref")
+    if execution_ref and execution_ref not in recipe_refs:
+        errors.append("video execution_ref não está em recipe.research_refs")
+    if execution_ref and execution_ref not in research_by_id:
+        errors.append(f"video execution_ref inexistente: {execution_ref}")
+    execution_lineage, expected_execution_ref = briefs.execution_binding(
+        recipe,
+        concept,
+        research_by_id,
+    )
+    if execution_lineage not in {*research.ALLOWED_LINEAGE, "original"}:
+        errors.append(
+            f"video execution lineage não resolve em evidência válida: {execution_lineage}"
+        )
+
+    expected = {
+        "brief_ref": brief_ref,
+        "concept_id": concept_id,
+        "concept_lineage": concept_lineage,
+        "concept_lineage_ref": concept_lineage_ref,
+        "execution_lineage": execution_lineage,
+        "execution_ref": expected_execution_ref,
+        "variant_id": recipe.get("variant_id"),
+    }
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            errors.append("video lineage artifact inválido")
+            continue
+        for field, expected_value in expected.items():
+            if artifact.get(field) != expected_value:
+                errors.append(
+                    f"artifact {artifact.get('path', '<sem path>')} {field} diverge "
+                    f"da lineage selada: {artifact.get(field)!r} != {expected_value!r}"
+                )
+    return errors
 
 
 def seal_run_lock(
@@ -202,29 +676,34 @@ def seal_run_lock(
     if git_errors:
         raise ValueError("git state inválido: " + "; ".join(git_errors))
     sealed_inputs = [seal_file(item, kind="input") for item in input_files]
+    expected_scene_plan = scene_plan_from_inputs(sealed_inputs)
     sealed_artifacts = []
     for artifact in artifacts:
         sealed = seal_file(artifact, kind="artifact")
-        for field in (
-            "market_id",
-            "locale",
-            "copy_language",
-            "format",
-            "duration_seconds",
-            "audio_strategy",
-            "technical_status",
-            "brief_ref",
-            "concept_id",
-            "variant_id",
-        ):
-            if sealed.get(field) in (None, ""):
-                raise ValueError(f"artifact sem {field}: {sealed['path']}")
-        if sealed["audio_strategy"] not in SOUND_STRATEGIES:
-            raise ValueError(f"audio_strategy inválida: {sealed['audio_strategy']}")
-        if sealed["technical_status"] != "pass":
-            raise ValueError(f"artifact sem QA técnico PASS: {sealed['path']}")
+        metadata_errors = artifact_metadata_errors(sealed)
+        if metadata_errors:
+            raise ValueError("; ".join(metadata_errors))
+        sealed["scene_evidence"] = seal_scene_evidence(
+            sealed,
+            expected_scene_plan,
+        )
+        sealed["scene_plan"] = deepcopy(expected_scene_plan)
         sealed["artifact_key"] = artifact_key(app, batch_id, sealed)
         sealed_artifacts.append(sealed)
+    canonical_errors = canonical_video_input_errors(
+        app=app,
+        input_files=sealed_inputs,
+        artifacts=sealed_artifacts,
+        git_state=git_state,
+    )
+    if canonical_errors:
+        raise ValueError("; ".join(canonical_errors))
+    lineage_errors = video_lineage_contract_errors(
+        sealed_inputs,
+        sealed_artifacts,
+    )
+    if lineage_errors:
+        raise ValueError("; ".join(lineage_errors))
     input_digest = canonical_digest(
         sorted(
             sealed_inputs,
@@ -245,6 +724,31 @@ def seal_run_lock(
     }
     lock["lock_digest"] = canonical_digest(lock)
     return lock
+
+
+def artifact_metadata_errors(artifact: dict) -> list[str]:
+    """Revalidate semantic artifact invariants, independent of the lock digest."""
+    errors = []
+    path = artifact.get("path", "artifact")
+    for field in ARTIFACT_REQUIRED_FIELDS:
+        if artifact.get(field) in (None, ""):
+            errors.append(f"artifact sem {field}: {path}")
+    if artifact.get("audio_strategy") not in SOUND_STRATEGIES:
+        errors.append(f"audio_strategy inválida: {artifact.get('audio_strategy')}")
+    if artifact.get("technical_status") != "pass":
+        errors.append(f"artifact sem QA técnico PASS: {path}")
+    if artifact.get("concept_lineage") not in research.ALLOWED_LINEAGE:
+        errors.append(f"artifact com concept_lineage inválida: {path}")
+    allowed_execution = {*research.ALLOWED_LINEAGE, "original"}
+    execution_lineage = artifact.get("execution_lineage")
+    execution_ref = artifact.get("execution_ref")
+    if execution_lineage not in allowed_execution:
+        errors.append(f"artifact com execution_lineage inválida: {path}")
+    if execution_lineage == "competitor_pattern" and not execution_ref:
+        errors.append(f"artifact competitor_pattern sem execution_ref: {path}")
+    if execution_lineage == "original" and execution_ref:
+        errors.append(f"artifact original não pode declarar execution_ref: {path}")
+    return errors
 
 
 def capture_git_state(root: Path) -> dict:
@@ -342,6 +846,25 @@ def verify_run_lock(lock: dict) -> list:
     errors.extend(verify_git_state(lock.get("git_state")))
     for item in lock.get("input_files", []) or []:
         errors.extend(verify_sealed_file(item, kind="input"))
+    errors.extend(
+        canonical_video_input_errors(
+            app=lock.get("app"),
+            input_files=lock.get("input_files", []) or [],
+            artifacts=lock.get("artifacts", []) or [],
+            git_state=lock.get("git_state") or {},
+        )
+    )
+    errors.extend(
+        video_lineage_contract_errors(
+            lock.get("input_files", []) or [],
+            lock.get("artifacts", []) or [],
+        )
+    )
+    try:
+        expected_scene_plan = scene_plan_from_inputs(lock.get("input_files", []) or [])
+    except (TypeError, ValueError) as exc:
+        errors.append(f"run lock render_props inválido: {exc}")
+        expected_scene_plan = None
     seen_artifact_keys = set()
     for item in lock.get("artifacts", []) or []:
         current_key = item.get("artifact_key")
@@ -351,7 +874,36 @@ def verify_run_lock(lock: dict) -> list:
         expected_key = artifact_key(lock.get("app"), lock.get("batch_id"), item)
         if current_key != expected_key:
             errors.append(f"run lock artifact_key inválido: {current_key}")
+        errors.extend(artifact_metadata_errors(item))
         errors.extend(verify_sealed_file(item, kind="artifact"))
+        evidence = item.get("scene_evidence", []) or []
+        if expected_scene_plan is not None:
+            if item.get("scene_plan") != expected_scene_plan:
+                errors.append(
+                    f"artifact {current_key} scene_plan diverge de render_props"
+                )
+            errors.extend(
+                f"artifact {current_key} {error}"
+                for error in scene_evidence_metadata_errors(
+                    item,
+                    expected_scene_plan,
+                )
+            )
+        for frame in evidence if isinstance(evidence, list) else []:
+            if not isinstance(frame, dict):
+                errors.append(f"artifact {current_key} scene frame inválido")
+                continue
+            errors.extend(verify_sealed_file(frame, kind="input"))
+            path = Path(frame.get("path", ""))
+            if path.is_file():
+                try:
+                    with Image.open(path) as image:
+                        if image.size != (item.get("width"), item.get("height")):
+                            errors.append(
+                                f"artifact {current_key} scene frame dimensão divergente"
+                            )
+                except Exception as exc:
+                    errors.append(f"artifact {current_key} scene frame inválido: {exc}")
     return errors
 
 
@@ -392,6 +944,10 @@ def build_playback_report(run_lock: dict) -> dict:
                 "audio_strategy": artifact["audio_strategy"],
                 "brief_ref": artifact["brief_ref"],
                 "concept_id": artifact["concept_id"],
+                "concept_lineage": artifact["concept_lineage"],
+                "concept_lineage_ref": artifact["concept_lineage_ref"],
+                "execution_lineage": artifact["execution_lineage"],
+                "execution_ref": artifact.get("execution_ref"),
                 "variant_id": artifact["variant_id"],
                 "status": "pending",
                 "checks": {},
@@ -417,6 +973,10 @@ def approval_digest(record: dict, run_lock_digest: str) -> str:
             "audio_strategy": record.get("audio_strategy"),
             "brief_ref": record.get("brief_ref"),
             "concept_id": record.get("concept_id"),
+            "concept_lineage": record.get("concept_lineage"),
+            "concept_lineage_ref": record.get("concept_lineage_ref"),
+            "execution_lineage": record.get("execution_lineage"),
+            "execution_ref": record.get("execution_ref"),
             "variant_id": record.get("variant_id"),
             "status": record.get("status"),
             "checks": record.get("checks"),
@@ -502,6 +1062,10 @@ def verify_playback_report(report: dict, *, allow_pending: bool = False) -> list
                 "audio_strategy",
                 "brief_ref",
                 "concept_id",
+                "concept_lineage",
+                "concept_lineage_ref",
+                "execution_lineage",
+                "execution_ref",
                 "variant_id",
             ):
                 if record.get(field) != locked.get(field):
@@ -522,6 +1086,27 @@ def verify_playback_report(report: dict, *, allow_pending: bool = False) -> list
                 errors.append(
                     f"artifact {record.get('artifact_key')} checks pendentes: {', '.join(missing)}"
                 )
+            if not str(record.get("reviewer") or "").strip():
+                errors.append(
+                    f"artifact {record.get('artifact_key')} reviewer ausente"
+                )
+            if not str(record.get("notes") or "").strip():
+                errors.append(f"artifact {record.get('artifact_key')} notes ausentes")
+            try:
+                reviewed_at = datetime.fromisoformat(
+                    str(record.get("reviewed_at")).replace("Z", "+00:00")
+                )
+                if reviewed_at.tzinfo is None:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(
+                    f"artifact {record.get('artifact_key')} reviewed_at inválido"
+                )
+        elif record.get("status") != "pending":
+            errors.append(
+                f"artifact {record.get('artifact_key')} status inválido: "
+                f"{record.get('status')}"
+            )
         elif not allow_pending:
             errors.append(f"artifact {record.get('artifact_key')} sem approval")
     expected_status = (
@@ -653,7 +1238,9 @@ def derive_visual_evidence(
     qa_dir: Path,
     *,
     duration_seconds: float,
-) -> tuple[Path, Path]:
+    scene_plan: list[dict],
+    expected_size: tuple[int, int],
+) -> tuple[Path, Path, list[dict]]:
     qa_dir.mkdir(parents=True, exist_ok=True)
     poster = qa_dir / "poster.png"
     contact = qa_dir / "contact-1fps.jpg"
@@ -699,7 +1286,40 @@ def derive_visual_evidence(
             )
     if not poster.is_file() or not contact.is_file():
         raise ValueError("evidência visual não foi criada")
-    return poster, contact
+    scene_evidence = []
+    for index, item in enumerate(scene_plan, start=1):
+        safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", item["scene_id"]).strip("-")
+        frame_path = qa_dir / f"scene-{index:02d}-{safe_id or 'scene'}.png"
+        completed = run_command(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-ss",
+                f"{item['time_seconds']:.6f}",
+                "-i",
+                str(video_path),
+                "-frames:v",
+                "1",
+                str(frame_path),
+            ]
+        )
+        if completed.returncode != 0 or not frame_path.is_file():
+            raise ValueError(
+                f"FFmpeg não gerou frame da cena {item['scene_id']}: "
+                + (completed.stderr or "sem detalhe")[:500]
+            )
+        with Image.open(frame_path) as image:
+            if image.size != expected_size:
+                raise ValueError(
+                    f"frame da cena {item['scene_id']} tem {image.size}, "
+                    f"esperado {expected_size}"
+                )
+        scene_evidence.append({**item, "path": str(frame_path)})
+    return poster, contact, scene_evidence
 
 
 def collect_run_inputs(
@@ -723,8 +1343,6 @@ def collect_run_inputs(
             "brief",
             root / "briefs" / app_slug / f"{recipe.get('brief_ref')}.yaml",
         ),
-        ("video_patterns", root / "swipe" / app_slug / "video-patterns.yaml"),
-        ("research", root / "swipe" / app_slug / "competitors.yaml"),
         ("asset_registry", root / "assets" / app_slug / "registry.yaml"),
         (
             "video_template",
@@ -738,6 +1356,12 @@ def collect_run_inputs(
         ("remotion_package", root / "remotion" / "package.json"),
         ("remotion_lock", root / "remotion" / "package-lock.json"),
     ]
+    video_patterns_path = root / "swipe" / app_slug / "video-patterns.yaml"
+    research_path = root / "swipe" / app_slug / "competitors.yaml"
+    if video_patterns_path.is_file():
+        candidates.append(("video_patterns", video_patterns_path))
+    if research_path.is_file():
+        candidates.append(("research", research_path))
     if captions_path is not None:
         candidates.append(("captions", captions_path))
     if render_receipt_path is not None:
@@ -885,10 +1509,14 @@ def prepare(
     qa_dir.mkdir(parents=True, exist_ok=True)
     props_path = qa_dir / "props.json"
     props_path.write_text(json.dumps(props, ensure_ascii=False, indent=2) + "\n")
-    poster, contact = derive_visual_evidence(
+    frame_plan = scene_frame_plan(props)
+    expected_size = video.FORMATS[recipe["format"]]
+    poster, contact, scene_evidence = derive_visual_evidence(
         video_path,
         qa_dir,
         duration_seconds=float(recipe["duration_seconds"]),
+        scene_plan=frame_plan,
+        expected_size=expected_size,
     )
     inputs = collect_run_inputs(
         root=root,
@@ -911,6 +1539,36 @@ def prepare(
         "ffmpeg": command_version(["ffmpeg", "-version"]),
         "ffprobe": command_version(["ffprobe", "-version"]),
     }
+    brief = video.load_yaml(
+        root / "briefs" / app_slug / f"{recipe.get('brief_ref')}.yaml"
+    )
+    concept = next(
+        (
+            item
+            for item in brief.get("concepts", []) or []
+            if item.get("id") == recipe.get("concept_id")
+        ),
+        {},
+    )
+    patterns_path = root / "swipe" / app_slug / "video-patterns.yaml"
+    patterns = (
+        video.load_yaml(patterns_path)
+        if patterns_path.is_file()
+        else {"patterns": []}
+    )
+    competitor_path = root / "swipe" / app_slug / "competitors.yaml"
+    competitors = video.load_yaml(competitor_path) if competitor_path.is_file() else {}
+    research_by_id, registry_errors = video.merge_research_registries(
+        patterns,
+        competitors,
+    )
+    if registry_errors:
+        raise ValueError("research registries inválidos: " + "; ".join(registry_errors))
+    execution_lineage, execution_ref = briefs.execution_binding(
+        recipe,
+        concept,
+        research_by_id,
+    )
     artifact = {
         "path": str(video_path),
         "market_id": market["id"],
@@ -922,7 +1580,15 @@ def prepare(
         "technical_status": "pass",
         "brief_ref": recipe["brief_ref"],
         "concept_id": recipe["concept_id"],
+        "concept_lineage": concept.get("lineage"),
+        "concept_lineage_ref": concept.get("lineage_ref"),
+        "execution_lineage": execution_lineage,
+        "execution_ref": execution_ref,
         "variant_id": recipe["variant_id"],
+        "width": expected_size[0],
+        "height": expected_size[1],
+        "scene_ids": [item["scene_id"] for item in frame_plan],
+        "scene_evidence": scene_evidence,
         "technical_warnings": [
             *technical["warnings"],
             *sound["warnings"],
@@ -965,8 +1631,7 @@ def main() -> None:
     approve.add_argument("--report", required=True)
     approve.add_argument("--artifact-key", required=True)
     approve.add_argument("--reviewer", required=True)
-    approve.add_argument("--notes", required=True)
-    approve.add_argument("--confirm-all", action="store_true")
+    approve.add_argument("--review-file", required=True)
     args = parser.parse_args()
     if args.command == "prepare":
         try:
@@ -984,14 +1649,21 @@ def main() -> None:
     report_path = Path(args.report)
     report = json.loads(report_path.read_text())
     if args.command == "approve":
-        checks = {name: args.confirm_all for name in PLAYBACK_CHECKS}
+        review = json.loads(Path(args.review_file).read_text())
+        declared_checks = review.get("checks", [])
+        if isinstance(declared_checks, dict):
+            checks = declared_checks
+        else:
+            checks = {
+                name: name in set(declared_checks or []) for name in PLAYBACK_CHECKS
+            }
         try:
             report = approve_artifact(
                 report,
                 args.artifact_key,
                 reviewer=args.reviewer,
                 checks=checks,
-                notes=args.notes,
+                notes=review.get("notes", ""),
             )
         except ValueError as exc:
             sys.exit(f"creative-forge: video approval BLOCKED: {exc}")

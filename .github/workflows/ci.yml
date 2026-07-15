@@ -24,6 +24,30 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python3 -m unittest discover -s tests -v
       - run: python3 -m compileall -q scripts tests
+      - name: Build and smoke-test the installed wheel quick start
+        run: |
+          if [ ! -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
+            brew install --cask google-chrome
+          fi
+          python3 -m pip wheel . --no-deps --wheel-dir "$RUNNER_TEMP/wheelhouse"
+          python3 -m venv "$RUNNER_TEMP/forge-wheel"
+          "$RUNNER_TEMP/forge-wheel/bin/pip" install "$RUNNER_TEMP"/wheelhouse/creative_forge-*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/forge-wheel/bin/creative-forge" preflight --app sunrise-demo
+          "$RUNNER_TEMP/forge-wheel/bin/creative-forge" build \
+            --app sunrise-demo --batch-id ci-wheel --jobs 2
+          "$RUNNER_TEMP/forge-wheel/bin/python" - <<'PY'
+          import json
+          from scripts.paths import default_root
+
+          report = json.loads(
+              (default_root() / "qa/sunrise-demo/ci-wheel/report.json").read_text()
+          )
+          assert report["automated_status"] == "pass"
+          assert len(report["records"]) == 6
+          assert all(__import__("pathlib").Path(item["path"]).is_file() for item in report["records"])
+          print("installed_wheel_quick_start=PASS records=6")
+          PY
       - name: Parse YAML
         run: |
           python3 - <<'PY'
@@ -45,7 +69,7 @@ jobs:
           python3 scripts/forge.py preflight --app sunrise-demo
           python3 scripts/video_mining.py --app sunrise-demo --json
           python3 scripts/video.py audit-recipe --app sunrise-demo --recipe morning-ritual
-      - name: Materialize real Sunrise Walks video props without browser or render
+      - name: Materialize bundled fictional Sunrise Walks video props
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -54,10 +78,10 @@ jobs:
           root = Path.cwd()
           app = render.load_yaml(root / "apps/sunrise-demo.yaml")
           recipe = render.load_yaml(root / "recipes/sunrise-demo/video/morning-ritual.yaml")
-          props = video.build_props(recipe, app, "br", root=root)
+          props = video.build_props(recipe, app, "us", root=root)
           assert props["app"]["slug"] == "sunrise-demo"
-          assert props["marketId"] == "br"
-          assert props["locale"] == "pt-BR"
+          assert props["marketId"] == "us"
+          assert props["locale"] == "en-US"
           assert props["durationInFrames"] == 450
           assert len(props["scenes"]) == 3
           print("sunrise-demo_video_props=PASS")
@@ -72,7 +96,7 @@ jobs:
           python3 scripts/forge.py build-video \
             --app sunrise-demo \
             --recipe morning-ritual \
-            --locale pt-BR \
+            --locale en-US \
             --batch-id ci-video-proof
           python3 scripts/video_qa.py status \
-            --report qa/sunrise-demo/ci-video-proof/pt-BR/morning-ritual/playback-report.json
+            --report qa/sunrise-demo/ci-video-proof/en-US/morning-ritual/playback-report.json

@@ -10,13 +10,98 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 try:
-    from scripts import audiences, qa
+    from scripts import audiences, qa, research
 except ImportError:
     import audiences
     import qa
+    import research
 
 REQUIRED_META_TOOLS = {"ads_create_creative", "ads_create_ad"}
+WRITE_TOOL_TOKENS = {
+    "create",
+    "update",
+    "delete",
+    "remove",
+    "activate",
+    "publish",
+    "upsert",
+    "setstatus",
+    "mutate",
+    "write",
+    "edit",
+    "patch",
+    "enable",
+    "disable",
+    "pause",
+    "resume",
+    "launch",
+    "archive",
+    "destroy",
+    "change",
+    "reset",
+    "increase",
+    "decrease",
+    "forget",
+    "submit",
+    "send",
+    "spend",
+    "execute",
+    "run",
+    "perform",
+    "apply",
+    "commit",
+    "deploy",
+    "set",
+}
+COMPACT_WRITE_TOOL_MARKERS = (
+    "create",
+    "update",
+    "delete",
+    "remove",
+    "activate",
+    "publish",
+    "upsert",
+    "setstatus",
+    "setbudget",
+    "mutate",
+    "write",
+    "patch",
+    "enable",
+    "disable",
+    "pause",
+    "resume",
+    "launch",
+    "archive",
+    "destroy",
+    "change",
+    "reset",
+    "increase",
+    "decrease",
+    "forget",
+    "submit",
+    "send",
+    "spend",
+    "execute",
+    "perform",
+    "commit",
+    "deploy",
+)
+READ_ONLY_TOOL_TOKENS = {
+    "get",
+    "list",
+    "read",
+    "fetch",
+    "query",
+    "search",
+    "lookup",
+    "inspect",
+    "check",
+    "verify",
+    "describe",
+}
 CAPABILITY_MAX_AGE_SECONDS = 60 * 60
 CAPABILITY_FUTURE_TOLERANCE_SECONDS = 5 * 60
 LIVE_RECEIPT_MAX_AGE_SECONDS = 60 * 60
@@ -25,6 +110,11 @@ DESTINATION_RECEIPT_TYPES = {
     "app_store_destination",
     "custom_product_page_destination",
     "landing_page_destination",
+}
+DESTINATION_TYPE_RECEIPTS = {
+    "app_store": "app_store_destination",
+    "custom_product_page": "custom_product_page_destination",
+    "landing_page": "landing_page_destination",
 }
 try:
     from scripts.paths import default_root
@@ -89,6 +179,36 @@ def canonical_json_bytes(value) -> bytes:
         )
         + "\n"
     ).encode()
+
+
+def _tool_tokens(value) -> tuple[str, ...]:
+    if not isinstance(value, str) or not value.strip():
+        return ()
+    expanded = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value.strip())
+    return tuple(re.findall(r"[a-z0-9]+", expanded.lower()))
+
+
+def _normalized_tool_name(value) -> str:
+    return "".join(_tool_tokens(value))
+
+
+def _is_write_tool(value) -> bool:
+    tokens = _tool_tokens(value)
+    if not tokens:
+        return True
+    if any(token in WRITE_TOOL_TOKENS for token in tokens):
+        return True
+    normalized = "".join(tokens)
+    if any(marker in normalized for marker in COMPACT_WRITE_TOOL_MARKERS):
+        return True
+    operation = tokens[0] if tokens[0] in READ_ONLY_TOOL_TOKENS else None
+    if operation is None and len(tokens) > 1 and tokens[1] in READ_ONLY_TOOL_TOKENS:
+        operation = tokens[1]
+    return operation is None
+
+
+def _is_meta_ad_readback_tool(value) -> bool:
+    return _normalized_tool_name(value) == "adsgetad" and not _is_write_tool(value)
 
 
 def _verified_raw_response_bytes(
@@ -368,6 +488,10 @@ def _verify_destination_readiness(
     for field in ("provider", "tool"):
         if not readiness_receipt.get(field):
             raise PublishBlocked(f"readiness receipt live sem {field}")
+    if _is_write_tool(readiness_receipt.get("tool")):
+        raise PublishBlocked(
+            "readiness receipt live tool precisa ser read-only; não pode ser create/write"
+        )
     if readiness_receipt.get("receipt_type") != receipt_type:
         raise PublishBlocked("readiness receipt live é de outro gate")
     if readiness_receipt.get("app") != app_config.get("slug"):
@@ -402,6 +526,9 @@ def _verify_destination_readiness(
         "receipt_type": receipt_type,
         "provider": readiness_receipt.get("provider"),
         "tool": readiness_receipt.get("tool"),
+        "app": readiness_receipt.get("app"),
+        "status": readiness_receipt.get("status"),
+        "destination": dict(receipt_destination),
         "observed_at": readiness_receipt.get("observed_at"),
         **response_evidence,
         "verification_basis": "live_provider_readback",
@@ -422,6 +549,150 @@ def _readiness_records(payload: dict | None, expected_app: str) -> list[dict]:
     if not all(isinstance(item, dict) for item in raw):
         raise PublishBlocked("readiness bundle contém receipt inválido")
     return list(raw)
+
+
+def _required_readiness_types(
+    app_config: dict,
+    selected_destination_receipt: str,
+) -> list[str]:
+    required = (
+        ((app_config.get("readiness", {}) or {}).get("required_receipts", {}) or {})
+    )
+    if not isinstance(required, dict):
+        raise PublishBlocked("app readiness.required_receipts precisa ser objeto")
+    if selected_destination_receipt not in required:
+        raise PublishBlocked(
+            f"readiness não declara o gate específico '{selected_destination_receipt}'"
+        )
+    destination_policy = str(
+        required.get(selected_destination_receipt) or ""
+    ).strip().lower()
+    if (
+        not destination_policy
+        or destination_policy in {"not_required", "not_applicable", "false"}
+        or "blocked" in destination_policy
+    ):
+        raise PublishBlocked(
+            f"readiness gate {selected_destination_receipt} não está habilitado: "
+            f"{required.get(selected_destination_receipt)}"
+        )
+    selected = {selected_destination_receipt}
+    for receipt_type, policy in required.items():
+        if receipt_type == selected_destination_receipt:
+            continue
+        if receipt_type in DESTINATION_RECEIPT_TYPES:
+            continue
+        if receipt_type == "meta_video_publish":
+            continue
+        normalized_policy = str(policy or "").strip().lower()
+        if not normalized_policy or normalized_policy in {
+            "not_required",
+            "not_applicable",
+            "false",
+        }:
+            continue
+        if "blocked" in normalized_policy:
+            raise PublishBlocked(
+                f"readiness gate {receipt_type} está bloqueado: {policy}"
+            )
+        selected.add(str(receipt_type))
+    return sorted(selected)
+
+
+def _seal_app_config_provenance(
+    app_config: dict,
+    workspace_root: str | Path,
+) -> dict:
+    root = qa.lexical_absolute_path(workspace_root)
+    app = app_config.get("slug")
+    if not isinstance(app, str) or not qa.CORE_PATH_SEGMENT_RE.fullmatch(app):
+        raise PublishBlocked(f"app slug inválido para config canônica: {app!r}")
+    path = root / "apps" / f"{app}.yaml"
+    symlink = qa.first_symlink_component(path, root)
+    if symlink is not None:
+        raise PublishBlocked(f"app config canônica usa symlink: {symlink}")
+    if not path.is_file():
+        raise PublishBlocked(f"app config canônica ausente: {path}")
+    try:
+        loaded = yaml.safe_load(path.read_text()) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise PublishBlocked(f"app config canônica inválida: {exc}") from exc
+    if not isinstance(loaded, dict) or loaded.get("slug") != app:
+        raise PublishBlocked("app config canônica diverge do app solicitado")
+    configured_policy = (
+        ((app_config.get("readiness", {}) or {}).get("required_receipts", {}) or {})
+    )
+    loaded_policy = (
+        ((loaded.get("readiness", {}) or {}).get("required_receipts", {}) or {})
+    )
+    if configured_policy != loaded_policy:
+        raise PublishBlocked(
+            "readiness policy recebida diverge de apps/<app>.yaml canônico"
+        )
+    return {
+        "path": str(path),
+        "resolved_path": str(path.resolve(strict=True)),
+        "sha256": qa.sha256(path),
+        "readiness_policy_digest": canonical_digest(
+            {"required_receipts": loaded_policy}
+        ),
+    }
+
+
+def _verify_app_config_provenance(
+    manifest: dict,
+    workspace_root: str | Path,
+    expected_app: str | None,
+) -> tuple[list[str], list[str]]:
+    errors = []
+    provenance = manifest.get("app_config_provenance")
+    if not isinstance(provenance, dict):
+        return [], ["manifest sem app_config_provenance canônica"]
+    root = qa.lexical_absolute_path(workspace_root)
+    if not isinstance(expected_app, str) or not qa.CORE_PATH_SEGMENT_RE.fullmatch(
+        expected_app
+    ):
+        return [], [f"verify receipt expected_app inválido: {expected_app!r}"]
+    app = expected_app
+    path = root / "apps" / f"{app}.yaml"
+    if provenance.get("path") != str(path):
+        errors.append("manifest app_config_provenance.path não é canônico")
+    symlink = qa.first_symlink_component(path, root)
+    if symlink is not None:
+        errors.append(f"manifest app config usa symlink ancestral: {symlink}")
+        return [], errors
+    if not path.is_file():
+        return [], [*errors, f"manifest app config canônica ausente: {path}"]
+    try:
+        resolved = str(path.resolve(strict=True))
+        loaded = yaml.safe_load(path.read_text()) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return [], [*errors, f"manifest app config canônica inválida: {exc}"]
+    if provenance.get("resolved_path") != resolved:
+        errors.append("manifest app_config_provenance.resolved_path diverge")
+    if provenance.get("sha256") != qa.sha256(path):
+        errors.append("manifest app_config_provenance.sha256 diverge")
+    if not isinstance(loaded, dict) or loaded.get("slug") != app:
+        return [], [*errors, "manifest app config canônica é de outro app"]
+    loaded_policy = (
+        ((loaded.get("readiness", {}) or {}).get("required_receipts", {}) or {})
+    )
+    expected_policy_digest = canonical_digest(
+        {"required_receipts": loaded_policy}
+    )
+    if provenance.get("readiness_policy_digest") != expected_policy_digest:
+        errors.append("manifest readiness policy digest diverge da app config canônica")
+    destination = manifest.get("destination") or {}
+    destination_receipt = DESTINATION_TYPE_RECEIPTS.get(
+        destination.get("type") if isinstance(destination, dict) else None
+    )
+    if not destination_receipt:
+        return [], [*errors, "manifest destination não resolve readiness policy"]
+    try:
+        required_types = _required_readiness_types(loaded, destination_receipt)
+    except PublishBlocked as exc:
+        return [], [*errors, f"manifest app readiness policy inválida: {exc}"]
+    return required_types, errors
 
 
 def _verify_required_runtime_readiness(
@@ -467,6 +738,11 @@ def _verify_required_runtime_readiness(
         for field in ("provider", "tool"):
             if not receipt.get(field):
                 raise PublishBlocked(f"readiness {receipt_type} sem {field}")
+        if _is_write_tool(receipt.get("tool")):
+            raise PublishBlocked(
+                f"readiness {receipt_type} tool precisa ser read-only; "
+                "não pode ser create/write"
+            )
         if receipt.get("app") != app_config.get("slug"):
             raise PublishBlocked(f"readiness {receipt_type} é de outro app")
         if receipt.get("status") != "ready":
@@ -490,6 +766,8 @@ def _verify_required_runtime_readiness(
                 "receipt_type": receipt_type,
                 "provider": receipt.get("provider"),
                 "tool": receipt.get("tool"),
+                "app": receipt.get("app"),
+                "status": receipt.get("status"),
                 "observed_at": receipt.get("observed_at"),
                 **response_evidence,
                 "verification_basis": "live_provider_readback",
@@ -538,6 +816,7 @@ def prepare_manifest(
     briefs: dict,
     readiness_receipt: dict | None,
     evidence_root: str | Path = ROOT,
+    workspace_root: str | Path | None = None,
     now: datetime | None = None,
     expected_app: str | None = None,
 ) -> dict:
@@ -545,9 +824,18 @@ def prepare_manifest(
         raise PublishBlocked("QA automático não passou")
     if report.get("visual_status") != "approved":
         raise PublishBlocked("revisão visual ainda não foi aprovada")
-    file_errors = qa.verify_report_files(report)
+    if report.get("version") != 2 or report.get("provenance_required") is not True:
+        raise PublishBlocked(
+            "publicação exige QA com proveniência version 2; regenere a batch"
+        )
+    workspace_root = Path(workspace_root) if workspace_root is not None else ROOT
+    file_errors = qa.verify_report_files(report, expected_root=workspace_root)
     if file_errors:
         raise PublishBlocked("artefatos mudaram após QA: " + "; ".join(file_errors))
+    app_config_provenance = _seal_app_config_provenance(
+        app_config,
+        workspace_root,
+    )
     if any(
         record.get("media_kind") == "video"
         for record in report.get("records", []) or []
@@ -592,8 +880,11 @@ def prepare_manifest(
         raise PublishBlocked("capability receipt sem readback_tool real")
     if readback_tool not in set(capabilities.get("tools", [])):
         raise PublishBlocked("capability readback_tool não aparece nas tools descobertas")
-    if readback_tool in REQUIRED_META_TOOLS:
-        raise PublishBlocked("capability readback_tool não pode ser uma tool de create")
+    if not _is_meta_ad_readback_tool(readback_tool):
+        raise PublishBlocked(
+            "capability readback_tool precisa ser o getter read-only ads_get_ad; "
+            "não pode ser uma tool de create/write"
+        )
     if readback_tool.strip().lower() in {"readback", "manual", "local", "unknown", "n/a"}:
         raise PublishBlocked("capability readback_tool é placeholder, não uma tool real")
     if not all((account_id, campaign_id, ad_set_id)):
@@ -656,6 +947,20 @@ def prepare_manifest(
         now=now,
         evidence_root=evidence_root,
     )
+    required_readiness_types = _required_readiness_types(
+        app_config,
+        receipt_type,
+    )
+    observed_readiness_types = sorted(
+        {
+            readiness_evidence["receipt_type"],
+            *(item["receipt_type"] for item in runtime_readiness),
+        }
+    )
+    if observed_readiness_types != required_readiness_types:
+        raise PublishBlocked(
+            "readiness receipts verificados divergem da policy canônica do app"
+        )
 
     for record in records:
         for field in ("concept_id", "variant_id"):
@@ -708,6 +1013,36 @@ def prepare_manifest(
                 "este workflow publica somente criativos com evidência rastreável; "
                 "regenere a batch com o pipeline atual"
             )
+        concept_lineage = record.get("concept_lineage")
+        concept_lineage_ref = record.get("concept_lineage_ref")
+        execution_lineage = record.get("execution_lineage")
+        execution_ref = record.get("execution_ref")
+        if concept_lineage not in research.ALLOWED_LINEAGE:
+            raise PublishBlocked(
+                f"item {record.get('recipe')} sem concept_lineage válida selada no QA"
+            )
+        if not str(concept_lineage_ref or "").strip():
+            raise PublishBlocked(
+                f"item {record.get('recipe')} sem concept_lineage_ref selada no QA"
+            )
+        if execution_lineage not in {*research.ALLOWED_LINEAGE, "original"}:
+            raise PublishBlocked(
+                f"item {record.get('recipe')} sem execution_lineage válida selada no QA"
+            )
+        if execution_ref and execution_ref not in record.get("research_refs", []):
+            raise PublishBlocked(
+                f"item {record.get('recipe')} execution_ref não rastreável no QA"
+            )
+        if execution_lineage == "competitor_pattern" and not execution_ref:
+            raise PublishBlocked(
+                f"item {record.get('recipe')} competitor_pattern sem execution_ref"
+            )
+        if execution_lineage == "competitor_pattern" and not str(
+            record.get("swiped_from") or ""
+        ).strip():
+            raise PublishBlocked(
+                f"item {record.get('recipe')} execution competitor_pattern sem swiped_from"
+            )
         item_key = hashlib.sha256(
             (
                 f"{record.get('brief_ref')}|{record.get('concept_id')}|"
@@ -741,6 +1076,10 @@ def prepare_manifest(
             "sha256": record.get("sha256"),
             "research_refs": list(record.get("research_refs", []) or []),
             "swiped_from": record.get("swiped_from", ""),
+            "concept_lineage": concept_lineage,
+            "concept_lineage_ref": concept_lineage_ref,
+            "execution_lineage": execution_lineage,
+            "execution_ref": execution_ref,
             "creative_name": f"creative-{deterministic_name}",
             "ad_name": f"ad-{deterministic_name}",
             "requested_status": "PAUSED",
@@ -761,8 +1100,10 @@ def prepare_manifest(
         "capability_checked_at": capabilities.get("checked_at"),
         "capability_agent": capabilities.get("agent"),
         "destination": destination,
+        "app_config_provenance": app_config_provenance,
         "destination_readiness": readiness_evidence,
         "runtime_readiness": runtime_readiness,
+        "required_readiness_receipt_types": required_readiness_types,
         "brief": {
             "ref": brief.get("id"),
             "objective": brief.get("objective"),
@@ -806,8 +1147,10 @@ def verify_receipt(
     manifest: dict,
     receipt: dict,
     *,
+    expected_app: str,
     now: datetime | None = None,
     evidence_root: str | Path = ROOT,
+    workspace_root: str | Path = ROOT,
     enforce_freshness: bool = True,
 ) -> list:
     errors = []
@@ -820,6 +1163,72 @@ def verify_receipt(
             "manifest_digest do manifesto não corresponde ao conteúdo canônico "
             "do manifesto"
         ]
+    if not isinstance(expected_app, str) or not qa.CORE_PATH_SEGMENT_RE.fullmatch(
+        expected_app
+    ):
+        errors.append(f"verify receipt expected_app inválido: {expected_app!r}")
+    elif manifest.get("app") != expected_app:
+        errors.append(
+            f"manifest app '{manifest.get('app')}' diverge de expected_app "
+            f"'{expected_app}'"
+        )
+    if manifest.get("version") != 2:
+        errors.append("manifest version precisa ser 2")
+    if manifest.get("provider") != "meta_ads_mcp":
+        errors.append("manifest provider precisa ser meta_ads_mcp")
+    readback_requirement = manifest.get("readback_requirement")
+    if not isinstance(readback_requirement, dict):
+        errors.append("manifest readback_requirement precisa ser objeto")
+        readback_requirement = {}
+    if readback_requirement.get("provider") != "meta_ads_mcp":
+        errors.append("manifest readback provider precisa ser meta_ads_mcp")
+    if readback_requirement.get("verification_basis") != "live_provider_readback":
+        errors.append("manifest readback exige verification_basis live_provider_readback")
+    if readback_requirement.get("local_validation_sufficient") is not False:
+        errors.append("manifest readback precisa negar suficiência da validação local")
+    readback_tool = readback_requirement.get("tool")
+    normalized_readback_tool = str(readback_tool or "").strip().lower()
+    if not normalized_readback_tool:
+        errors.append("manifest readback tool real é obrigatória")
+    elif not _is_meta_ad_readback_tool(readback_tool):
+        errors.append(
+            "manifest readback tool precisa ser o getter read-only ads_get_ad; "
+            "não pode ser uma tool de create/write"
+        )
+    elif normalized_readback_tool in {
+        "readback",
+        "manual",
+        "local",
+        "unknown",
+        "n/a",
+    }:
+        errors.append("manifest readback tool é placeholder")
+    if manifest.get("requested_status") != "PAUSED":
+        errors.append("manifest requested_status precisa ser PAUSED")
+    if manifest.get("activation_allowed") is not False:
+        errors.append("manifest activation_allowed precisa ser false")
+    manifest_items = manifest.get("items", []) or []
+    if not isinstance(manifest_items, list) or not manifest_items:
+        errors.append("manifest items precisa ser uma lista não vazia")
+        manifest_items = []
+    for item in manifest_items:
+        if not isinstance(item, dict):
+            errors.append("manifest item precisa ser objeto")
+        elif item.get("requested_status") != "PAUSED":
+            errors.append(
+                f"manifest item {item.get('item_key')} requested_status precisa ser PAUSED"
+            )
+    manifest_keys = [
+        item.get("item_key") if isinstance(item, dict) else None
+        for item in manifest_items
+    ]
+    if any(not isinstance(key, str) or not key.strip() for key in manifest_keys):
+        errors.append("manifest item_key precisa ser string não vazia")
+    valid_manifest_keys = [
+        key for key in manifest_keys if isinstance(key, str) and key.strip()
+    ]
+    if len(valid_manifest_keys) != len(set(valid_manifest_keys)):
+        errors.append("manifest item_key duplicado")
     if receipt.get("manifest_digest") != manifest.get("manifest_digest"):
         errors.append("receipt manifest_digest não corresponde ao manifesto")
     if receipt.get("provider") != manifest.get("provider"):
@@ -830,16 +1239,115 @@ def verify_receipt(
         errors.append(
             "receipt precisa declarar que validação local não substitui consulta live"
         )
-    readiness_evidence = [manifest.get("destination_readiness")]
-    readiness_evidence.extend(manifest.get("runtime_readiness", []) or [])
-    for evidence in readiness_evidence:
+    runtime_readiness = manifest.get("runtime_readiness", [])
+    if not isinstance(runtime_readiness, list):
+        errors.append("manifest runtime_readiness precisa ser lista")
+        runtime_readiness = []
+    required_readiness = manifest.get("required_readiness_receipt_types")
+    if not isinstance(required_readiness, list) or not required_readiness:
+        errors.append("manifest required readiness receipt types precisa ser lista não vazia")
+        required_readiness = []
+    elif not all(
+        isinstance(item, str) and item.strip() for item in required_readiness
+    ):
+        errors.append("manifest required readiness receipt types contém valor inválido")
+        required_readiness = []
+    elif len(required_readiness) != len(set(required_readiness)):
+        errors.append("manifest required readiness receipt types contém duplicatas")
+    canonical_required_readiness, policy_errors = _verify_app_config_provenance(
+        manifest,
+        workspace_root,
+        expected_app,
+    )
+    errors.extend(policy_errors)
+    if required_readiness != canonical_required_readiness:
+        errors.append(
+            "manifest required readiness receipt types divergem da app config canônica"
+        )
+    readiness_evidence = [
+        ("destination readiness", manifest.get("destination_readiness"))
+    ]
+    readiness_evidence.extend(
+        (f"runtime readiness {index}", evidence)
+        for index, evidence in enumerate(runtime_readiness)
+    )
+    observed_readiness_types = [
+        evidence.get("receipt_type")
+        for _, evidence in readiness_evidence
+        if isinstance(evidence, dict)
+    ]
+    if len(observed_readiness_types) != len(set(observed_readiness_types)):
+        errors.append("manifest readiness receipt_type duplicado")
+    if set(observed_readiness_types) != set(required_readiness):
+        errors.append(
+            "manifest required readiness receipt types divergem das evidências seladas"
+        )
+    destination = manifest.get("destination") or {}
+    expected_destination_receipt = DESTINATION_TYPE_RECEIPTS.get(
+        destination.get("type") if isinstance(destination, dict) else None
+    )
+    destination_evidence = manifest.get("destination_readiness")
+    if not isinstance(destination_evidence, dict):
+        destination_evidence = {}
+    if not expected_destination_receipt:
+        errors.append("manifest destination.type não resolve readiness receipt")
+    elif destination_evidence.get("receipt_type") != expected_destination_receipt:
+        errors.append(
+            "manifest destination readiness receipt_type diverge de destination.type"
+        )
+    for label, evidence in readiness_evidence:
         if not isinstance(evidence, dict):
-            errors.append("manifesto sem readiness evidence selada")
+            errors.append(f"manifesto sem {label} evidence selada")
             continue
+        if not evidence.get("provider") or not evidence.get("tool"):
+            errors.append(f"manifest {label} sem provider/tool")
+        if _is_write_tool(evidence.get("tool")):
+            errors.append(
+                f"manifest {label} readiness tool precisa ser read-only; "
+                "não pode ser create/write"
+            )
+        if not evidence.get("receipt_type"):
+            errors.append(f"manifest {label} sem receipt_type")
+        if evidence.get("app") != manifest.get("app"):
+            errors.append(f"manifest {label} app diverge do manifesto")
+        if evidence.get("status") != "ready":
+            errors.append(f"manifest {label} status precisa ser ready")
+        if label == "destination readiness":
+            evidence_destination = evidence.get("destination")
+            manifest_destination = manifest.get("destination")
+            if not isinstance(evidence_destination, dict):
+                errors.append("manifest destination readiness sem destination selada")
+            elif not isinstance(manifest_destination, dict):
+                errors.append("manifest destination inválida")
+            else:
+                for field in (
+                    "ref",
+                    "type",
+                    "url",
+                    "custom_product_page_id",
+                ):
+                    if evidence_destination.get(field) != manifest_destination.get(field):
+                        errors.append(
+                            "manifest destination readiness destination."
+                            f"{field} diverge do manifesto"
+                        )
+        if evidence.get("verification_basis") != "live_provider_readback":
+            errors.append(f"manifest {label} não comprova readiness por readback live")
+        if evidence.get("local_validation_sufficient") is not False:
+            errors.append(f"manifest {label} precisa negar suficiência local")
+        try:
+            _parse_live_time(
+                evidence.get("observed_at"),
+                f"manifest {label}",
+                now,
+                enforce_max_age=enforce_freshness,
+            )
+        except PublishBlocked as exc:
+            errors.append(str(exc))
         try:
             verify_raw_response_evidence(
                 evidence,
-                f"manifest readiness {evidence.get('receipt_type')}",
+                f"manifest readiness {label} {evidence.get('receipt_type')}",
                 evidence_root,
             )
         except PublishBlocked as exc:
@@ -847,7 +1355,11 @@ def verify_receipt(
     status = receipt.get("delivery_status")
     if status != "PAUSED":
         errors.append(f"delivery_status precisa ser PAUSED, recebido {status}")
-    expected = {item["item_key"] for item in manifest.get("items", [])}
+    expected = {
+        item.get("item_key")
+        for item in manifest_items
+        if isinstance(item, dict) and isinstance(item.get("item_key"), str) and item.get("item_key")
+    }
     received_items = receipt.get("items", []) or []
     received_keys = [item.get("item_key") for item in received_items]
     received = set(received_keys)
@@ -856,9 +1368,9 @@ def verify_receipt(
     if received != expected:
         errors.append("receipt não cobre exatamente todos os items do manifesto")
     expected_items = {
-        item.get("item_key"): item for item in manifest.get("items", []) or []
+        item.get("item_key"): item for item in manifest_items if isinstance(item, dict)
     }
-    readback_tool = (manifest.get("readback_requirement", {}) or {}).get("tool")
+    readback_tool = readback_requirement.get("tool")
     try:
         manifest_created_at = datetime.fromisoformat(
             str(manifest.get("created_at")).replace("Z", "+00:00")
@@ -954,6 +1466,7 @@ def main() -> None:
     verify_parser = sub.add_parser("verify-receipt")
     verify_parser.add_argument("--manifest", required=True)
     verify_parser.add_argument("--receipt", required=True)
+    verify_parser.add_argument("--app", required=True)
     verify_parser.add_argument("--evidence-root", default=str(ROOT))
     args = parser.parse_args()
 
@@ -1007,7 +1520,9 @@ def main() -> None:
         errors = verify_receipt(
             manifest,
             receipt,
+            expected_app=args.app,
             evidence_root=Path(args.evidence_root),
+            workspace_root=ROOT,
         )
         for error in errors:
             print(f"  ❌ {error}")

@@ -7,13 +7,14 @@ from pathlib import Path
 from PIL import Image
 
 from scripts import publish, qa, research
+from tests.qa_fixtures import approve_report, production_report
 
 
 RESEARCH = {
     "creatives": [
-        {"id": "meta-pain", "angle": "pain-to-peace"},
-        {"id": "demo-pattern", "angle": "morning-relief"},
-        {"id": "meta-sleep", "angle": "sleep"},
+        {"id": "meta-pain", "angle": "pain-to-peace", "lineage": "competitor_pattern"},
+        {"id": "demo-pattern", "angle": "morning-relief", "lineage": "competitor_pattern"},
+        {"id": "meta-sleep", "angle": "sleep", "lineage": "competitor_pattern"},
     ]
 }
 
@@ -26,6 +27,7 @@ class SwipeAlignmentTests(unittest.TestCase):
             ["pain-to-peace"],
             ["meta-pain", "demo-pattern"],
             RESEARCH,
+            swiped_from="pain-to-peace structure",
         )
         self.assertEqual(errors, [])
 
@@ -36,19 +38,22 @@ class SwipeAlignmentTests(unittest.TestCase):
             ["social-proof"],
             ["meta-pain"],
             RESEARCH,
+            swiped_from="pain-to-peace structure",
         )
         self.assertTrue(any("fora da estratégia" in e for e in errors))
 
     def test_template_without_swipe_angles_blocks(self):
         errors = research.swipe_alignment_errors(
-            "morning-walk", "pain-headline-cta", [], ["meta-pain"], RESEARCH
+            "morning-walk", "pain-headline-cta", [], ["meta-pain"], RESEARCH,
+            swiped_from="pain-to-peace structure",
         )
         self.assertTrue(any("swipe_angles" in e for e in errors))
 
     def test_angle_comparison_is_normalized(self):
         data = {"creatives": [{"id": "meta-21", "angle": "21-day challenge"}]}
         errors = research.swipe_alignment_errors(
-            "desafio", "photo-overlay", ["21-Day-Challenge"], ["meta-21"], data
+            "desafio", "photo-overlay", ["21-Day-Challenge"], ["meta-21"], data,
+            swiped_from="21-day challenge structure",
         )
         self.assertEqual(errors, [])
 
@@ -61,14 +66,54 @@ class SwipeAlignmentTests(unittest.TestCase):
             ["pain-to-peace"],
             ["meta-missing", "meta-pain"],
             RESEARCH,
+            swiped_from="pain-to-peace structure",
         )
         self.assertEqual(errors, [])
+
+    def test_only_competitor_lineage_requires_swipe_structure(self):
+        exploratory = research.swipe_alignment_errors(
+            "original",
+            "free-composition",
+            [],
+            ["meta-pain"],
+            RESEARCH,
+            execution_lineage="original",
+            execution_ref=None,
+            swiped_from="",
+        )
+        competitor = research.swipe_alignment_errors(
+            "adaptation",
+            "pain-headline-cta",
+            ["pain-to-peace"],
+            ["meta-pain"],
+            RESEARCH,
+            execution_lineage="competitor_pattern",
+            execution_ref="meta-pain",
+            swiped_from="",
+        )
+
+        self.assertEqual(exploratory, [])
+        self.assertTrue(any("swiped_from" in error for error in competitor), competitor)
+
+    def test_competitor_lineage_blocks_omitted_swiped_from(self):
+        errors = research.swipe_alignment_errors(
+            "adaptation",
+            "pain-headline-cta",
+            ["pain-to-peace"],
+            ["meta-pain"],
+            RESEARCH,
+            execution_lineage="competitor_pattern",
+            execution_ref="meta-pain",
+            swiped_from=None,
+        )
+
+        self.assertTrue(any("swiped_from" in error for error in errors), errors)
 
 
 class SwipeFidelityQaAndPublishTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         image = self.root / "creative.png"
         Image.new("RGB", (1080, 1080), "white").save(image)
         self.spec = {
@@ -177,11 +222,13 @@ class SwipeFidelityQaAndPublishTests(unittest.TestCase):
         self.temp.cleanup()
 
     def approved_report(self, spec):
-        automated = qa.audit_outputs([spec])
-        report = qa.build_report("sunrise-demo", "batch-1", automated)
-        return qa.approve_visual(
-            report, "claude", {name: True for name in qa.VISUAL_CHECKS}
+        report = production_report(
+            self.root,
+            "sunrise-demo",
+            "batch-1",
+            [spec],
         )
+        return approve_report(report, "claude")
 
     def prepare(self, report):
         return publish.prepare_manifest(
@@ -198,15 +245,16 @@ class SwipeFidelityQaAndPublishTests(unittest.TestCase):
             briefs=self.briefs,
             readiness_receipt=self.readiness_receipt,
             evidence_root=self.root,
+            workspace_root=self.root,
             now=self.now,
         )
 
-    def test_visual_qa_requires_swipe_fidelity_check(self):
-        self.assertIn("swipe_fidelity", qa.VISUAL_CHECKS)
+    def test_visual_qa_requires_lineage_fidelity_check(self):
+        self.assertIn("lineage_fidelity", qa.VISUAL_CHECKS)
         automated = qa.audit_outputs([self.spec])
         report = qa.build_report("sunrise-demo", "batch-1", automated)
         checks = {name: True for name in qa.VISUAL_CHECKS}
-        checks["swipe_fidelity"] = False
+        checks["lineage_fidelity"] = False
         with self.assertRaises(ValueError):
             qa.approve_visual(report, "claude", checks)
 
@@ -217,11 +265,11 @@ class SwipeFidelityQaAndPublishTests(unittest.TestCase):
         self.assertEqual(item["swiped_from"], "StrideCo ES — dor→alívio")
 
     def test_record_without_lineage_blocks_publish(self):
-        spec = dict(self.spec)
-        spec.pop("research_refs")
-        spec.pop("swiped_from")
+        report = self.approved_report(self.spec)
+        report["records"][0].pop("research_refs")
+        report["records"][0].pop("swiped_from")
         with self.assertRaises(publish.PublishBlocked):
-            self.prepare(self.approved_report(spec))
+            self.prepare(report)
 
 
 if __name__ == "__main__":

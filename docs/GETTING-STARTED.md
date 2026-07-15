@@ -53,7 +53,9 @@ The two sections people get wrong:
 ## 2. Record real research — `swipe/<slug>/competitors.yaml`
 
 This is the pipeline's foundation and the one stage that cannot be faked:
-**a creative that doesn't cite recorded research does not build.**
+**a creative without a traceable evidence anchor does not build.** That anchor
+may be competitor structure, your own performance, customer insight, a trend,
+or evidence supporting an exploratory concept.
 
 Go to the [Meta Ad Library](https://www.facebook.com/ads/library/), find
 competitors that have kept the same ads running for months (longevity ≈
@@ -85,8 +87,8 @@ buildable creative:
 ```yaml
 template: pain-headline-cta          # must exist in templates/image/
 concept_id: morning-relief           # must exist in the brief
-swiped_from: "BigRival — pain-to-peace framing"
 research_refs: [my-app-0001]         # must exist in your swipe file
+execution_ref: my-app-0001           # optional format/structure anchor
 claims_used: [daily_free, no_account]  # must be declared in apps/my-app.yaml
 target_markets: [us, mexico]         # must be declared in locales.markets
 locales:
@@ -94,10 +96,15 @@ locales:
   es: { ... }                        # transcreate — don't translate
 ```
 
-Each template declares its own `swipe_angles`; a recipe whose research
-pattern doesn't match the template's angle is rejected. Per-field character
-limits live in the template's `meta.yaml`, so overflow fails at preflight
-instead of shipping as a cropped headline.
+The concept also declares `lineage` and `lineage_ref`. `execution_ref` belongs
+to the recipe and may point to another lineage. Only an execution reference
+classified as `competitor_pattern` adds `swiped_from` and must match the
+template's `swipe_angles`; omit it for an original execution. This separation
+keeps the concept's evidence honest while allowing a different visual grammar.
+Per-field character limits remain technical fit constraints, not taste scores.
+Video follows the same rule: an original execution has no `execution_ref` and
+no structural `references`; when one is selected, `references` covers exactly
+that verified audiovisual pattern. Concept research remains independent.
 
 ## 4. Build and seal
 
@@ -107,12 +114,17 @@ python3 scripts/forge.py build --app my-app --batch-id 001 --jobs 4
 ```
 
 `build` renders the full matrix (recipe × market × format), hashes every PNG,
-and writes a QA report + contact sheets under `qa/my-app/001/`. Then a human
-— or an agent that **actually renders and looks at the sheets** — approves:
+and writes a QA report + contact sheets under `qa/my-app/001/`. On macOS, the
+renderer serializes full Chrome launches by default; override
+`CREATIVE_FORGE_CHROME_MAX_PARALLEL` only after a local parallel smoke test.
+
+Then a human
+— or an agent that uses the sheets as an index and **opens every original
+PNG at full resolution** — records notes by `artifact_key` and approves:
 
 ```bash
 python3 scripts/qa.py approve --report qa/my-app/001/report.json \
-  --reviewer your-name --confirm-all
+  --reviewer your-name --review-file qa-review.json
 ```
 
 The approval seals the batch: report digest + input digest. Change one byte
@@ -127,7 +139,7 @@ and a required human/agent viewing of the actual MP4.
 ## 5. Audiences
 
 ```bash
-python3 scripts/audiences.py validate --app my-app
+python3 scripts/audiences.py --app my-app
 ```
 
 Audience plans (`audiences/<slug>.yaml`) are deliberately boring: broad

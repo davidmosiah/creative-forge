@@ -34,18 +34,7 @@ class HostAssetsTests(unittest.TestCase):
                 "locale": "pt-BR",
             }
         ]
-        self.report = {
-            "app": "sunrise-demo",
-            "batch_id": "20260710-a",
-            "automated_status": "pass",
-            "visual_status": "approved",
-            "records": self.records,
-            "matrix_digest": qa.matrix_digest(self.records),
-            "approved_matrix_digest": qa.matrix_digest(self.records),
-        }
-        self.report["approved_report_identity_digest"] = qa.report_identity_digest(
-            self.report
-        )
+        self.report = self.approved_report()
         self.hosting = {
             "site_dir": str(self.site_dir),
             "public_subdir": "ads",
@@ -54,6 +43,25 @@ class HostAssetsTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def approved_report(self):
+        for record in self.records:
+            record["artifact_key"] = qa.artifact_key(record)
+        report = qa.build_report(
+            "sunrise-demo",
+            "20260710-a",
+            {
+                "status": "pass",
+                "errors": [],
+                "warnings": [],
+                "records": self.records,
+            },
+        )
+        return qa.approve_visual(
+            report,
+            "test-agent",
+            {name: True for name in qa.VISUAL_CHECKS},
+        )
 
     def test_stage_copies_by_content_hash_and_binds_manifest(self):
         manifest = host_assets.stage(self.report, self.hosting, "sunrise-demo")
@@ -104,11 +112,7 @@ class HostAssetsTests(unittest.TestCase):
         video["path"] = str(self.artifact.with_name("clip.mp4"))
         video["sha256"] = make_png(Path(video["path"]), b"mp4-bytes")
         self.records.append(video)
-        self.report["matrix_digest"] = qa.matrix_digest(self.records)
-        self.report["approved_matrix_digest"] = self.report["matrix_digest"]
-        self.report["approved_report_identity_digest"] = qa.report_identity_digest(
-            self.report
-        )
+        self.report = self.approved_report()
 
         manifest = host_assets.stage(self.report, self.hosting, "sunrise-demo")
 

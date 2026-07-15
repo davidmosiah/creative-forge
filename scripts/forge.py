@@ -173,8 +173,10 @@ def preflight(app_slug: str, *, root: Path = ROOT) -> dict:
     }
     recipe_errors.extend(validate_research_refs(loaded_recipes, research_data))
 
-    known_research_refs = {
-        item.get("id") for item in research_data.get("creatives", []) or []
+    research_by_id = {
+        item.get("id"): item
+        for item in research_data.get("creatives", []) or []
+        if item.get("id")
     }
     brief_errors, brief_warnings, briefs_by_id = [], [], {}
     brief_paths = sorted((root / "briefs" / app_slug).glob("*.yaml"))
@@ -189,7 +191,7 @@ def preflight(app_slug: str, *, root: Path = ROOT) -> dict:
         audit = briefs.audit_brief(
             brief,
             expected_app=app_slug,
-            known_research_refs=known_research_refs,
+            research_by_id=research_by_id,
             supported_markets={
                 market.get("id")
                 for market in render.app_target_markets(app)
@@ -223,7 +225,12 @@ def preflight(app_slug: str, *, root: Path = ROOT) -> dict:
             )
         else:
             recipe_errors.extend(
-                briefs.recipe_binding_errors(recipe, brief, recipe_name)
+                briefs.recipe_binding_errors(
+                    recipe,
+                    brief,
+                    recipe_name,
+                    research_by_id=research_by_id,
+                )
             )
         recipe_errors.extend(
             assets.recipe_asset_errors(recipe, registry, recipe_name)
@@ -232,6 +239,20 @@ def preflight(app_slug: str, *, root: Path = ROOT) -> dict:
         template_name = recipe.get("template") or ""
         meta_path = root / "templates" / "image" / template_name / "meta.yaml"
         template_meta = render.load_yaml(meta_path) if meta_path.exists() else {}
+        brief = briefs_by_id.get(recipe.get("brief_ref")) or {}
+        concept = next(
+            (
+                item
+                for item in brief.get("concepts", []) or []
+                if item.get("id") == recipe.get("concept_id")
+            ),
+            {},
+        )
+        execution_lineage, execution_ref = briefs.execution_binding(
+            recipe,
+            concept,
+            research_by_id,
+        )
         recipe_errors.extend(
             research.swipe_alignment_errors(
                 recipe.get("name", "recipe"),
@@ -239,6 +260,9 @@ def preflight(app_slug: str, *, root: Path = ROOT) -> dict:
                 template_meta.get("swipe_angles", []) or [],
                 recipe.get("research_refs", []) or [],
                 research_data,
+                execution_lineage=execution_lineage,
+                execution_ref=execution_ref,
+                swiped_from=recipe.get("swiped_from"),
             )
         )
     audience_path = root / "audiences" / f"{app_slug}.yaml"
@@ -316,7 +340,7 @@ def build(app: str, batch_id: str, jobs: int) -> Path:
     subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "render.py"),
+            str(Path(render.__file__).resolve()),
             "--app",
             app,
             "--all",
@@ -340,7 +364,10 @@ def build(app: str, batch_id: str, jobs: int) -> Path:
     run_path.parent.mkdir(parents=True, exist_ok=True)
     run_path.write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n")
     print(f"QA report: {report_path}")
-    print("NEXT: abrir todos os contact sheets e registrar qa.py approve")
+    print(
+        "NEXT: usar os contact sheets só como índice, abrir cada PNG original "
+        "por artifact_key e registrar notas via qa.py approve --review-file"
+    )
     return report_path
 
 
@@ -422,7 +449,10 @@ def build_video(
     run_path.write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n")
     for report in reports:
         print(f"Video QA report: {report}")
-    print("NEXT: inspecionar cada vídeo completo e registrar video_qa.py approve")
+    print(
+        "NEXT: assistir cada vídeo completo, inspecionar cada frame nativo "
+        "selado por cena e registrar video_qa.py approve --review-file"
+    )
     return reports
 
 
@@ -477,7 +507,7 @@ def main() -> None:
         completed = subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "publish.py"),
+                str(Path(publish.__file__).resolve()),
                 "prepare",
                 "--qa-report",
                 args.qa_report,

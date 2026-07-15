@@ -24,5 +24,6 @@ measurement:
 concepts:
   - id: morning-walk-relief
     lineage: competitor_pattern
+    lineage_ref: demo-0000000000000001
     research_refs: [demo-0000000000000001, demo-0000000000000003]
     agent_rationale: "Adapt the fictional pain-to-peace structure to the demo product's real (fictional) daily walk."

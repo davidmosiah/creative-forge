@@ -6,17 +6,21 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
+import yaml
 
 try:
-    from scripts import render
+    from scripts import briefs, render, research
 except ImportError:  # direct execution: python3 scripts/qa.py
+    import briefs
     import render
+    import research
 
 try:
     from scripts.paths import default_root
@@ -31,10 +35,10 @@ VISUAL_CHECKS = (
     "claims_truthful",
     "safe_zones",
     "no_artifacts",
-    # the creative visibly follows the cited evidence/pattern structure
-    # (compare with swipe/<app>/competitors.yaml hook + source_url) —
-    # for current image templates; this is lineage, not performance proof
-    "swipe_fidelity",
+    # Agent judgment: the artifact remains faithful to its declared lineage.
+    # Only competitor_pattern means structural swipe fidelity; original
+    # lineages are reviewed against their own hypothesis and evidence anchor.
+    "lineage_fidelity",
 )
 PROVENANCE_FIELDS = (
     "recipe",
@@ -43,6 +47,10 @@ PROVENANCE_FIELDS = (
     "lineage",
     "claims_used",
     "template",
+    "concept_lineage",
+    "concept_lineage_ref",
+    "execution_lineage",
+    "execution_ref",
 )
 PUBLISH_METADATA_FIELDS = (
     "market_id",
@@ -65,7 +73,8 @@ SEALED_RECORD_FIELDS = (
     "ad_copy",
     "asset_refs",
 )
-REQUIRED_INPUT_ROLES = {"recipe", "research", "template", "app_config"}
+REQUIRED_INPUT_ROLES = {"recipe", "research", "brief", "template", "app_config"}
+CORE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,127})$")
 
 
 def lexical_absolute_path(value: str | Path) -> Path:
@@ -162,6 +171,26 @@ def canonical_input_digest(records: list) -> str:
     ).hexdigest()
 
 
+def artifact_key(record: dict) -> str:
+    """Stable key for one full-resolution artifact in an image QA report."""
+    payload = {
+        field: record.get(field)
+        for field in (
+            "path",
+            "sha256",
+            "market_id",
+            "locale",
+            "format",
+            "brief_ref",
+            "concept_id",
+            "variant_id",
+        )
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:20]
+
+
 def seal_input_files(spec: dict, errors: list, hash_cache: dict[Path, str]) -> list:
     """Validate provenance inputs and replace any supplied hash with a fresh one."""
     output_path = spec.get("path", "output")
@@ -211,6 +240,120 @@ def seal_input_files(spec: dict, errors: list, hash_cache: dict[Path, str]) -> l
     return sealed_inputs
 
 
+def _provenance_yaml(record: dict, role: str, errors: list) -> dict:
+    matches = [
+        item
+        for item in record.get("input_files", []) or []
+        if isinstance(item, dict) and item.get("role") == role
+    ]
+    if len(matches) != 1:
+        errors.append(
+            f"lineage contract exige exatamente um input {role}; recebeu {len(matches)}"
+        )
+        return {}
+    path = Path(matches[0].get("path", ""))
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        errors.append(f"lineage contract não leu {role} {path}: {exc}")
+        return {}
+    if not isinstance(data, dict):
+        errors.append(f"lineage contract {role} precisa conter um objeto YAML")
+        return {}
+    return data
+
+
+def lineage_contract_errors(record: dict) -> list:
+    """Bind sealed QA lineage fields back to the exact brief/research/recipe."""
+    errors = []
+    brief = _provenance_yaml(record, "brief", errors)
+    research_data = _provenance_yaml(record, "research", errors)
+    recipe = _provenance_yaml(record, "recipe", errors)
+    if errors:
+        return errors
+
+    research_by_id = {
+        item.get("id"): item
+        for item in research_data.get("creatives", []) or []
+        if isinstance(item, dict) and item.get("id")
+    }
+    brief_ref = record.get("brief_ref")
+    concept_id = record.get("concept_id")
+    if brief.get("id") != brief_ref:
+        errors.append(
+            f"lineage contract brief_ref diverge: report={brief_ref!r}, brief={brief.get('id')!r}"
+        )
+    concepts = {
+        item.get("id"): item
+        for item in brief.get("concepts", []) or []
+        if isinstance(item, dict) and item.get("id")
+    }
+    concept = concepts.get(concept_id)
+    if concept is None:
+        errors.append(f"lineage contract concept_id inexistente no brief: {concept_id}")
+        return errors
+
+    concept_lineage = concept.get("lineage")
+    concept_ref = concept.get("lineage_ref")
+    if record.get("concept_lineage") != concept_lineage:
+        errors.append("lineage contract concept_lineage diverge do brief selado")
+    if record.get("concept_lineage_ref") != concept_ref:
+        errors.append("lineage contract concept_lineage_ref diverge do brief selado")
+    concept_refs = set(concept.get("research_refs", []) or [])
+    if not concept_ref or concept_ref not in concept_refs:
+        errors.append("lineage contract lineage_ref não pertence aos research_refs do concept")
+    anchor = research_by_id.get(concept_ref)
+    if anchor is None:
+        errors.append(f"lineage contract lineage_ref inexistente no research: {concept_ref}")
+    elif concept_lineage not in research.ALLOWED_LINEAGE:
+        errors.append(f"lineage contract concept_lineage inválida: {concept_lineage}")
+    elif concept_lineage != "exploratory" and anchor.get("lineage") != concept_lineage:
+        errors.append("lineage contract concept lineage diverge da evidência selada")
+    if concept_lineage == "own_winner" and anchor is not None:
+        if (
+            anchor.get("evidence_level") != "performance_data"
+            or not anchor.get("performance_metrics")
+        ):
+            errors.append(
+                "lineage contract own_winner exige performance_data e performance_metrics"
+            )
+
+    recipe_refs = list(recipe.get("research_refs", []) or [])
+    record_refs = list(record.get("research_refs", []) or [])
+    if record_refs != recipe_refs:
+        errors.append("lineage contract research_refs divergem da recipe selada")
+    if not set(recipe_refs).issubset(concept_refs):
+        errors.append("lineage contract recipe usa research_refs fora do concept")
+    expected_lineage_map = {
+        ref: (research_by_id.get(ref) or {}).get("lineage") for ref in recipe_refs
+    }
+    if record.get("lineage") != expected_lineage_map:
+        errors.append("lineage contract mapa lineage diverge do research selado")
+    for ref in recipe_refs:
+        if ref not in research_by_id:
+            errors.append(f"lineage contract research_ref inexistente: {ref}")
+
+    for field in ("brief_ref", "concept_id", "execution_ref"):
+        if record.get(field) != recipe.get(field):
+            errors.append(f"lineage contract {field} diverge da recipe selada")
+    if str(record.get("swiped_from") or "") != str(recipe.get("swiped_from") or ""):
+        errors.append("lineage contract swiped_from diverge da recipe selada")
+    execution_lineage, execution_ref = briefs.execution_binding(
+        recipe,
+        concept,
+        research_by_id,
+    )
+    if record.get("execution_lineage") != execution_lineage:
+        errors.append("lineage contract execution_lineage diverge da recipe selada")
+    if record.get("execution_ref") != execution_ref:
+        errors.append("lineage contract execution_ref diverge da recipe selada")
+    if execution_lineage == "competitor_pattern" and not str(
+        recipe.get("swiped_from") or ""
+    ).strip():
+        errors.append("lineage contract competitor execution sem swiped_from")
+    return errors
+
+
 def audit_outputs(
     specs: list,
     generated_after: datetime | None = None,
@@ -250,8 +393,7 @@ def audit_outputs(
             errors.append(f"dimensão inválida {path}: {size}, esperado {expected}")
         if mode != "RGB":
             errors.append(f"modo de cor inválido {path}: {mode}, esperado RGB")
-        records.append(
-            {
+        record = {
                 **spec,
                 "path": str(path),
                 **({"input_files": sealed_inputs} if require_provenance else {}),
@@ -260,7 +402,10 @@ def audit_outputs(
                 "actual_height": size[1],
                 "mode": mode,
             }
-        )
+        record["artifact_key"] = artifact_key(record)
+        if require_provenance:
+            errors.extend(lineage_contract_errors(record))
+        records.append(record)
 
     hashes = {}
     for record in records:
@@ -339,26 +484,122 @@ def build_report(app: str, batch_id: str, automated: dict) -> dict:
     }
 
 
-def approve_visual(report: dict, reviewer: str, checks: dict) -> dict:
+def _normalized_artifact_reviews(
+    report: dict,
+    artifact_reviews: list | None,
+    *,
+    allow_legacy: bool,
+) -> list:
+    records = report.get("records", []) or []
+    for record in records:
+        if not isinstance(record, dict) or record.get("artifact_key") != artifact_key(record):
+            raise ValueError("report contém artifact_key inválido")
+    records_by_key = {
+        record.get("artifact_key"): record
+        for record in records
+        if record.get("artifact_key")
+    }
+    if len(records_by_key) != len(records):
+        raise ValueError("report contém artifact_key ausente ou duplicado")
+    if artifact_reviews is None:
+        production_report = bool(
+            report.get("provenance_required")
+            or int(report.get("version") or 0) >= 2
+        )
+        if production_report or not allow_legacy:
+            raise ValueError(
+                "artifact_reviews por imagem são obrigatórias; abra cada PNG original"
+            )
+        artifact_reviews = [
+            {
+                "artifact_key": key,
+                "notes": "legacy non-production report",
+            }
+            for key in records_by_key
+        ]
+    if not isinstance(artifact_reviews, list):
+        raise ValueError("artifact_reviews precisa ser uma lista")
+    supplied_keys = [
+        item.get("artifact_key") if isinstance(item, dict) else None
+        for item in artifact_reviews
+    ]
+    if len(supplied_keys) != len(set(supplied_keys)):
+        raise ValueError("artifact_reviews contém artifact_key duplicado")
+    if set(supplied_keys) != set(records_by_key):
+        raise ValueError("artifact_reviews não cobre exatamente todos os artifacts")
+    normalized = []
+    for item in artifact_reviews:
+        key = item.get("artifact_key")
+        notes = str(item.get("notes") or "").strip()
+        if not notes:
+            raise ValueError(f"artifact {key} sem notes de inspeção full-resolution")
+        record = records_by_key[key]
+        normalized.append(
+            {
+                "artifact_key": key,
+                "path": record.get("path"),
+                "sha256": record.get("sha256"),
+                "width": record.get("actual_width"),
+                "height": record.get("actual_height"),
+                "notes": notes,
+            }
+        )
+    return sorted(normalized, key=lambda item: item["artifact_key"])
+
+
+def visual_approval_digest(report: dict) -> str:
+    payload = {
+        "visual_reviewer": report.get("visual_reviewer"),
+        "visual_reviewed_at": report.get("visual_reviewed_at"),
+        "visual_checks": report.get("visual_checks"),
+        "artifact_reviews": report.get("artifact_reviews"),
+        "approved_matrix_digest": report.get("approved_matrix_digest"),
+        "approved_input_digest": report.get("approved_input_digest"),
+        "approved_report_identity_digest": report.get(
+            "approved_report_identity_digest"
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def approve_visual(
+    report: dict,
+    reviewer: str,
+    checks: dict,
+    *,
+    artifact_reviews: list | None = None,
+) -> dict:
     if report.get("automated_status") != "pass":
         raise ValueError("QA automático não passou")
+    verification_errors = verify_report_files(report)
+    if verification_errors:
+        raise ValueError("QA report inválido: " + "; ".join(verification_errors))
+    if not str(reviewer or "").strip():
+        raise ValueError("reviewer é obrigatório")
     if report_requires_provenance(report) and not report.get("input_digest"):
         raise ValueError("input digest ausente em report com proveniência obrigatória")
     missing = [name for name in VISUAL_CHECKS if checks.get(name) is not True]
     if missing:
         raise ValueError(f"checks visuais pendentes: {', '.join(missing)}")
+    normalized_reviews = _normalized_artifact_reviews(
+        report, artifact_reviews, allow_legacy=True
+    )
     approved = dict(report)
     approved.update(
         {
             "visual_status": "approved",
-            "visual_reviewer": reviewer,
+            "visual_reviewer": str(reviewer).strip(),
             "visual_reviewed_at": datetime.now(timezone.utc).isoformat(),
             "visual_checks": {name: True for name in VISUAL_CHECKS},
             "approved_matrix_digest": report["matrix_digest"],
             "approved_input_digest": report.get("input_digest"),
             "approved_report_identity_digest": report_identity_digest(report),
+            "artifact_reviews": normalized_reviews,
         }
     )
+    approved["visual_approval_digest"] = visual_approval_digest(approved)
     return approved
 
 
@@ -378,8 +619,105 @@ def report_requires_provenance(report: dict) -> bool:
     return has_any_provenance_field
 
 
-def verify_report_files(report: dict) -> list:
+def first_symlink_component(path: str | Path, root: str | Path) -> Path | None:
+    """Return a symlink anywhere on a supposedly canonical workspace path."""
+    root_path = lexical_absolute_path(root)
+    candidate = lexical_absolute_path(path)
+    try:
+        candidate.relative_to(root_path)
+    except ValueError:
+        return candidate
+    cursor = Path(candidate.anchor)
+    for part in candidate.parts[1:]:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return cursor
+    return None
+
+
+def canonical_core_input_errors(report: dict, expected_root: str | Path) -> list:
+    """Bind mutable provenance paths to this runtime's canonical workspace."""
     errors = []
+    root = lexical_absolute_path(expected_root)
+    app_value = report.get("app")
+    app = str(app_value or "")
+    if not isinstance(app_value, str) or not CORE_PATH_SEGMENT_RE.fullmatch(app):
+        return [f"report app inválido para core input canônico: {app_value!r}"]
+    root_symlink = first_symlink_component(root, root)
+    if root_symlink is not None:
+        errors.append(f"workspace root usa symlink: {root_symlink}")
+    for record in report.get("records", []) or []:
+        brief_ref = record.get("brief_ref")
+        recipe_name = record.get("recipe")
+        invalid_segments = []
+        for label, value in (("brief_ref", brief_ref), ("recipe", recipe_name)):
+            if not isinstance(value, str) or not CORE_PATH_SEGMENT_RE.fullmatch(value):
+                errors.append(
+                    f"record {label} inválido para core input canônico: {value!r}"
+                )
+                invalid_segments.append(label)
+        expected = {
+            "app_config": root / "apps" / f"{app}.yaml",
+            "research": root / "swipe" / app / "competitors.yaml",
+        }
+        if "brief_ref" not in invalid_segments:
+            expected["brief"] = root / "briefs" / app / f"{brief_ref}.yaml"
+        if "recipe" not in invalid_segments:
+            expected["recipe"] = root / "recipes" / app / f"{recipe_name}.yaml"
+        inputs = record.get("input_files", []) or []
+        for role, expected_path in expected.items():
+            matches = [
+                item
+                for item in inputs
+                if isinstance(item, dict) and item.get("role") == role
+            ]
+            if len(matches) != 1:
+                errors.append(
+                    f"core input {role} precisa ser único para path canônico"
+                )
+                continue
+            path_value = matches[0].get("path")
+            if not isinstance(path_value, (str, os.PathLike)):
+                errors.append(f"core input {role} path canônico inválido")
+                continue
+            authored_path = os.fspath(path_value)
+            canonical_path = lexical_absolute_path(expected_path)
+            if (
+                not Path(authored_path).is_absolute()
+                or any(part in {".", ".."} for part in Path(authored_path).parts)
+                or authored_path != str(canonical_path)
+            ):
+                errors.append(
+                    f"core input {role} path authored não é canônico: "
+                    f"{authored_path!r} != {str(canonical_path)!r}"
+                )
+                continue
+            symlink = first_symlink_component(canonical_path, root)
+            if symlink is not None:
+                errors.append(
+                    f"core input {role} usa symlink ancestral não canônico: {symlink}"
+                )
+                continue
+            try:
+                canonical_resolved = str(canonical_path.resolve(strict=True))
+            except OSError as exc:
+                errors.append(f"core input {role} canônico inacessível: {exc}")
+                continue
+            if matches[0].get("resolved_path") != canonical_resolved:
+                errors.append(
+                    f"core input {role} resolved_path não corresponde ao path canônico"
+                )
+    return errors
+
+
+def verify_report_files(
+    report: dict,
+    *,
+    expected_root: str | Path | None = None,
+) -> list:
+    errors = []
+    if expected_root is not None:
+        errors.extend(canonical_core_input_errors(report, expected_root))
     for record in report.get("records", []):
         path = Path(record["path"])
         if not path.exists():
@@ -457,6 +795,8 @@ def verify_report_files(report: dict) -> list:
                     )
             refreshed_record["input_files"] = refreshed_inputs
             refreshed_records.append(refreshed_record)
+            if require_input_roles:
+                errors.extend(lineage_contract_errors(record))
 
         embedded_digest = canonical_input_digest(report.get("records", []))
         refreshed_digest = canonical_input_digest(refreshed_records)
@@ -476,6 +816,37 @@ def verify_report_files(report: dict) -> list:
             errors.append("input digest aprovado ausente em report com proveniência")
         elif report_input_digest and approved_input_digest != report_input_digest:
             errors.append("input digest aprovado não corresponde ao report")
+        try:
+            normalized_reviews = _normalized_artifact_reviews(
+                report,
+                report.get("artifact_reviews"),
+                allow_legacy=False,
+            )
+            if normalized_reviews != report.get("artifact_reviews"):
+                errors.append("artifact_reviews não correspondem aos artifacts aprovados")
+        except ValueError as exc:
+            errors.append(f"visual approval inválida: {exc}")
+        if not str(report.get("visual_reviewer") or "").strip():
+            errors.append("visual approval sem reviewer")
+        try:
+            reviewed_at = datetime.fromisoformat(
+                str(report.get("visual_reviewed_at")).replace("Z", "+00:00")
+            )
+            if reviewed_at.tzinfo is None:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors.append("visual approval sem visual_reviewed_at ISO-8601 válido")
+        missing_checks = [
+            name
+            for name in VISUAL_CHECKS
+            if (report.get("visual_checks") or {}).get(name) is not True
+        ]
+        if missing_checks:
+            errors.append(
+                "visual approval checks pendentes: " + ", ".join(missing_checks)
+            )
+        if report.get("visual_approval_digest") != visual_approval_digest(report):
+            errors.append("visual approval digest inválido")
     return errors
 
 
@@ -529,7 +900,7 @@ def expected_specs(app_slug: str) -> list:
         {
             "role": "engine",
             "component": "render",
-            "path": str(lexical_absolute_path(ROOT / "scripts" / "render.py")),
+            "path": str(lexical_absolute_path(Path(render.__file__).resolve())),
         },
         {
             "role": "engine",
@@ -580,6 +951,20 @@ def expected_specs(app_slug: str) -> list:
         ]
         brief_ref = recipe.get("brief_ref")
         brief_path = ROOT / "briefs" / app_slug / f"{brief_ref}.yaml"
+        brief = render.load_yaml(brief_path) if brief_ref and brief_path.exists() else {}
+        concept = next(
+            (
+                item
+                for item in brief.get("concepts", []) or []
+                if item.get("id") == recipe.get("concept_id")
+            ),
+            {},
+        )
+        execution_lineage, execution_ref = briefs.execution_binding(
+            recipe,
+            concept,
+            research_by_id,
+        )
         if brief_ref:
             input_files.append(
                 {"role": "brief", "path": str(lexical_absolute_path(brief_path))}
@@ -664,6 +1049,10 @@ def expected_specs(app_slug: str) -> list:
                         "claim_evidence": claim_evidence,
                         "brief_ref": brief_ref,
                         "concept_id": recipe.get("concept_id"),
+                        "concept_lineage": concept.get("lineage"),
+                        "concept_lineage_ref": concept.get("lineage_ref"),
+                        "execution_lineage": execution_lineage,
+                        "execution_ref": execution_ref,
                         "variant_id": recipe.get("variant_id") or recipe_path.stem,
                         **(
                             {"cta": localized_copy.get("cta")}
@@ -729,7 +1118,7 @@ def main() -> None:
     approve_parser = sub.add_parser("approve")
     approve_parser.add_argument("--report", required=True)
     approve_parser.add_argument("--reviewer", required=True)
-    approve_parser.add_argument("--confirm-all", action="store_true")
+    approve_parser.add_argument("--review-file", required=True)
     status_parser = sub.add_parser("status")
     status_parser.add_argument("--report", required=True)
     args = parser.parse_args()
@@ -751,19 +1140,34 @@ def main() -> None:
     elif args.command == "approve":
         report_path = Path(args.report)
         report = json.loads(report_path.read_text())
-        checks = {name: args.confirm_all for name in VISUAL_CHECKS}
-        approved = approve_visual(report, args.reviewer, checks)
+        review = json.loads(Path(args.review_file).read_text())
+        declared_checks = review.get("checks", [])
+        if isinstance(declared_checks, dict):
+            checks = declared_checks
+        else:
+            checks = {name: name in set(declared_checks or []) for name in VISUAL_CHECKS}
+        approved = approve_visual(
+            report,
+            args.reviewer,
+            checks,
+            artifact_reviews=review.get("artifact_reviews"),
+        )
         report_path.write_text(json.dumps(approved, ensure_ascii=False, indent=2) + "\n")
         print(f"visual=approved reviewer={args.reviewer} digest={approved['matrix_digest'][:12]}")
     else:
         report = json.loads(Path(args.report).read_text())
-        errors = verify_report_files(report)
+        errors = verify_report_files(report, expected_root=ROOT)
         print(
             f"automated={report.get('automated_status')} visual={report.get('visual_status')} "
             f"files={'valid' if not errors else 'changed'}"
         )
         for error in errors:
             print(f"  ❌ {error}")
+        for record in report.get("records", []) or []:
+            print(
+                f"  · artifact_key={record.get('artifact_key')} "
+                f"path={record.get('path')}"
+            )
         if errors:
             sys.exit(1)
 

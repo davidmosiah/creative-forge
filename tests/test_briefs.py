@@ -36,6 +36,7 @@ class BriefContractTests(unittest.TestCase):
                 {
                     "id": "morning-relief",
                     "lineage": "competitor_pattern",
+                    "lineage_ref": "meta-1",
                     "research_refs": ["meta-1"],
                     "agent_rationale": "Test a specific pain-to-relief opening.",
                 }
@@ -83,6 +84,141 @@ class BriefContractTests(unittest.TestCase):
 
         self.assertTrue(any("lineage" in error for error in result["errors"]))
         self.assertTrue(any("missing" in error for error in result["errors"]))
+
+    def test_lineage_anchor_is_truthful_without_constraining_exploration(self):
+        research_by_id = {
+            "meta-1": {
+                "id": "meta-1",
+                "lineage": "competitor_pattern",
+                "evidence_level": "observed",
+            },
+            "owned-1": {
+                "id": "owned-1",
+                "lineage": "own_winner",
+                "evidence_level": "performance_data",
+                "performance_metrics": {"installs": 12},
+            },
+            "review-1": {
+                "id": "review-1",
+                "lineage": "customer_insight",
+                "evidence_level": "observed",
+            },
+        }
+
+        exploratory = self.valid_brief()
+        exploratory["concepts"][0].update(
+            {
+                "lineage": "exploratory",
+                "lineage_ref": "meta-1",
+                "research_refs": ["meta-1"],
+            }
+        )
+        self.assertEqual(
+            briefs.audit_brief(exploratory, research_by_id=research_by_id)["errors"],
+            [],
+        )
+
+        own_winner = self.valid_brief()
+        own_winner["concepts"][0].update(
+            {
+                "lineage": "own_winner",
+                "lineage_ref": "meta-1",
+                "research_refs": ["meta-1"],
+            }
+        )
+        errors = briefs.audit_brief(
+            own_winner, research_by_id=research_by_id
+        )["errors"]
+        self.assertTrue(any("own_winner" in error for error in errors), errors)
+
+        own_winner["concepts"][0].update(
+            {"lineage_ref": "owned-1", "research_refs": ["owned-1", "meta-1"]}
+        )
+        self.assertEqual(
+            briefs.audit_brief(own_winner, research_by_id=research_by_id)["errors"],
+            [],
+        )
+
+        mismatched_insight = self.valid_brief()
+        mismatched_insight["concepts"][0].update(
+            {
+                "lineage": "customer_insight",
+                "lineage_ref": "meta-1",
+                "research_refs": ["meta-1", "review-1"],
+            }
+        )
+        errors = briefs.audit_brief(
+            mismatched_insight, research_by_id=research_by_id
+        )["errors"]
+        self.assertTrue(any("customer_insight" in error for error in errors), errors)
+
+    def test_competitor_concept_can_choose_an_original_execution(self):
+        brief = self.valid_brief()
+        recipe = {
+            "brief_ref": brief["id"],
+            "concept_id": "morning-relief",
+            "research_refs": ["meta-1"],
+            "target_markets": ["br"],
+        }
+
+        errors = briefs.recipe_binding_errors(recipe, brief, "recipe-a")
+        execution_lineage, execution_ref = briefs.execution_binding(
+            recipe,
+            brief["concepts"][0],
+            {"meta-1": {"id": "meta-1", "lineage": "competitor_pattern"}},
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual((execution_lineage, execution_ref), ("original", None))
+
+    def test_recipe_can_combine_concept_and_execution_lineages(self):
+        brief = self.valid_brief()
+        brief["concepts"][0].update(
+            {
+                "lineage": "own_winner",
+                "lineage_ref": "own-1",
+                "research_refs": ["own-1", "meta-1"],
+            }
+        )
+        recipe = {
+            "brief_ref": brief["id"],
+            "concept_id": "morning-relief",
+            "execution_ref": "meta-1",
+            "research_refs": ["meta-1"],
+            "target_markets": ["br"],
+        }
+        research_by_id = {
+            "own-1": {
+                "id": "own-1",
+                "lineage": "own_winner",
+                "evidence_level": "performance_data",
+                "performance_metrics": {"installs": 12},
+            },
+            "meta-1": {"id": "meta-1", "lineage": "competitor_pattern"},
+        }
+
+        errors = briefs.recipe_binding_errors(
+            recipe,
+            brief,
+            "recipe-a",
+            research_by_id=research_by_id,
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_recipe_rejects_ambiguous_lineage_ref_override(self):
+        brief = self.valid_brief()
+        recipe = {
+            "brief_ref": brief["id"],
+            "concept_id": "morning-relief",
+            "lineage_ref": "meta-1",
+            "research_refs": ["meta-1"],
+            "target_markets": ["br"],
+        }
+
+        errors = briefs.recipe_binding_errors(recipe, brief, "recipe-a")
+
+        self.assertTrue(any("execution_ref" in error for error in errors), errors)
 
     def test_recipe_must_bind_to_existing_concept_in_declared_brief(self):
         recipe = {

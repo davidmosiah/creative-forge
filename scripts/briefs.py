@@ -37,6 +37,7 @@ def audit_brief(
     *,
     expected_app: str | None = None,
     known_research_refs: set[str] | None = None,
+    research_by_id: dict[str, dict] | None = None,
     supported_markets: set[str] | None = None,
 ) -> dict:
     """Check auditable structure; the agent remains responsible for its quality."""
@@ -135,16 +136,66 @@ def audit_brief(
         refs = concept.get("research_refs", []) or []
         if not refs:
             errors.append(f"concept {concept_id} sem research_refs")
-        if known_research_refs is not None:
+        lineage_ref = concept.get("lineage_ref")
+        if not lineage_ref:
+            errors.append(f"concept {concept_id} sem lineage_ref")
+        elif lineage_ref not in refs:
+            errors.append(
+                f"concept {concept_id} lineage_ref '{lineage_ref}' precisa estar em research_refs"
+            )
+        known_refs = (
+            set(research_by_id)
+            if research_by_id is not None
+            else known_research_refs
+        )
+        if known_refs is not None:
             for ref in refs:
-                if ref not in known_research_refs:
+                if ref not in known_refs:
                     errors.append(f"concept {concept_id} referencia research_ref inexistente: {ref}")
+        anchor = (research_by_id or {}).get(lineage_ref)
+        if research_by_id is not None and lineage_ref in refs and anchor is None:
+            errors.append(
+                f"concept {concept_id} lineage_ref inexistente: {lineage_ref}"
+            )
+        elif anchor is not None and lineage != "exploratory":
+            if anchor.get("lineage") != lineage:
+                errors.append(
+                    f"concept {concept_id} declara {lineage}, mas lineage_ref "
+                    f"'{lineage_ref}' é {anchor.get('lineage')}"
+                )
+            if lineage == "own_winner" and (
+                anchor.get("evidence_level") != "performance_data"
+                or not anchor.get("performance_metrics")
+            ):
+                errors.append(
+                    f"concept {concept_id} own_winner exige lineage_ref com "
+                    "performance_data e performance_metrics"
+                )
         if not concept.get("agent_rationale"):
             errors.append(f"concept {concept_id} sem agent_rationale")
     return {"errors": errors, "warnings": warnings}
 
 
-def recipe_binding_errors(recipe: dict, brief: dict, recipe_name: str) -> list:
+def execution_binding(
+    recipe: dict,
+    concept: dict,
+    research_by_id: dict[str, dict],
+) -> tuple[str, str | None]:
+    """Resolve format/structure evidence independently from concept lineage."""
+    execution_ref = recipe.get("execution_ref")
+    if not execution_ref:
+        return "original", None
+    anchor = research_by_id.get(execution_ref) or {}
+    return str(anchor.get("lineage") or ""), execution_ref
+
+
+def recipe_binding_errors(
+    recipe: dict,
+    brief: dict,
+    recipe_name: str,
+    *,
+    research_by_id: dict[str, dict] | None = None,
+) -> list:
     errors = []
     brief_ref = recipe.get("brief_ref")
     if not brief_ref:
@@ -170,6 +221,22 @@ def recipe_binding_errors(recipe: dict, brief: dict, recipe_name: str) -> list:
         if not recipe_refs.issubset(concept_refs):
             errors.append(
                 f"[{recipe_name}] research_refs divergem do concept '{concept_id}'"
+            )
+        concept = concepts[concept_id]
+        if "lineage_ref" in recipe:
+            errors.append(
+                f"[{recipe_name}] lineage_ref pertence ao concept; use execution_ref "
+                "para uma referência de formato/execução"
+            )
+        execution_ref = recipe.get("execution_ref")
+        if execution_ref and execution_ref not in recipe_refs:
+            errors.append(
+                f"[{recipe_name}] research_refs precisa conter execution_ref "
+                f"'{execution_ref}'"
+            )
+        if execution_ref and research_by_id is not None and execution_ref not in research_by_id:
+            errors.append(
+                f"[{recipe_name}] execution_ref inexistente: {execution_ref}"
             )
     target_markets = recipe.get("target_markets")
     if not isinstance(target_markets, list) or not target_markets:
@@ -203,8 +270,10 @@ def main() -> None:
         else sorted((ROOT / "briefs" / args.app).glob("*.yaml"))
     )
     research_data = research.load_yaml(ROOT / "swipe" / args.app / "competitors.yaml")
-    known_refs = {
-        item.get("id") for item in research_data.get("creatives", []) or []
+    research_by_id = {
+        item.get("id"): item
+        for item in research_data.get("creatives", []) or []
+        if item.get("id")
     }
     app = load_yaml(ROOT / "apps" / f"{args.app}.yaml")
     supported_markets = {
@@ -217,7 +286,7 @@ def main() -> None:
         result = audit_brief(
             load_yaml(path),
             expected_app=args.app,
-            known_research_refs=known_refs,
+            research_by_id=research_by_id,
             supported_markets=supported_markets,
         )
         results.append({"path": str(path), **result})

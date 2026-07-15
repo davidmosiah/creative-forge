@@ -6,15 +6,14 @@
 
 <h3 align="center">
   The agent-driven paid-creative workflow that refuses to lie.<br>
-  Competitor research &rarr; localized creatives &rarr; sealed QA &rarr; ads born PAUSED &mdash; with receipts at every step.
+  Traceable evidence &rarr; original or adapted creatives &rarr; sealed QA &rarr; ads requested PAUSED and live-verified PAUSED &mdash; with receipts at every step.
 </h3>
 
 <p align="center">
-  <a href="https://pypi.org/project/creative-forge/"><img src="https://img.shields.io/pypi/v/creative-forge?style=for-the-badge&labelColor=0F172A&color=10B981&logo=pypi&logoColor=white" alt="PyPI version" /></a>
   <a href="https://github.com/davidmosiah/creative-forge/releases/latest"><img src="https://img.shields.io/github/v/release/davidmosiah/creative-forge?style=for-the-badge&labelColor=0F172A&color=2563EB&logo=github" alt="GitHub release" /></a>
   <a href="https://github.com/davidmosiah/creative-forge/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/davidmosiah/creative-forge/ci.yml?branch=main&style=for-the-badge&labelColor=0F172A&label=CI" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-AGPL--3.0-22C55E?style=for-the-badge&labelColor=0F172A" alt="License AGPL-3.0" /></a>
-  <a href="#-quality-bar"><img src="https://img.shields.io/badge/TESTS-284_passing-16A34A?style=for-the-badge&labelColor=0F172A" alt="284 tests" /></a>
+  <a href="#-quality-bar"><img src="https://img.shields.io/badge/TESTS-321_passing-16A34A?style=for-the-badge&labelColor=0F172A" alt="321 tests" /></a>
   <a href="https://www.remotion.dev"><img src="https://img.shields.io/badge/VIDEO-Remotion-7C3AED?style=for-the-badge&labelColor=0F172A" alt="Remotion video" /></a>
 </p>
 
@@ -52,15 +51,25 @@ That's the **actual QA contact sheet** the demo produces on a fresh clone: one c
 
 ## 🚀 Quick start
 
-### Install from PyPI
+### Install the package from the repository
 
 ```bash
-pip install creative-forge
+git clone https://github.com/davidmosiah/creative-forge.git
+pip install ./creative-forge
 
 # Demo workspace is bundled in the wheel — no clone required for image preflight/build
 creative-forge preflight --app sunrise-demo
 creative-forge build --app sunrise-demo --batch-id demo-001 --jobs 2
 ```
+
+The wheel quick start is exercised in CI. PyPI publication is still pending
+Trusted Publisher configuration, so this README does not claim a live PyPI
+package before that external state exists.
+
+On macOS, full Chrome launches are serialized by default because concurrent
+ephemeral profiles are unreliable under load. `--jobs` still controls other
+platforms; an operator may explicitly override the cap with
+`CREATIVE_FORGE_CHROME_MAX_PARALLEL` after verifying the local Chrome build.
 
 Prefer a checkout? Clone the repo (needed for Remotion video) and either work
 from the tree or point the CLI at it:
@@ -86,9 +95,10 @@ python3 scripts/forge.py preflight --app sunrise-demo
 # 2. Render the creative matrix + QA report + contact sheets
 python3 scripts/forge.py build --app sunrise-demo --batch-id demo-001 --jobs 2
 
-# 3. A human or agent ACTUALLY looks at the sheets, then seals approval
+# 3. Use the contact sheet as an index, open every original PNG, and write
+#    one note per artifact_key in qa-review.json before sealing approval.
 python3 scripts/qa.py approve --report qa/sunrise-demo/demo-001/report.json \
-  --reviewer you --confirm-all
+  --reviewer you --review-file qa-review.json
 
 # 4. Static dashboard of everything the sealed artifacts prove
 python3 scripts/dashboard.py --app sunrise-demo --open
@@ -123,9 +133,12 @@ humans authorize.**
 
 Three rules with no exceptions:
 
-1. **Swipe fidelity.** A creative that doesn't derive from cited competitor
-   research is blocked at preflight. Structure is copied — art and words are
-   always your own.
+1. **Truthful lineage, creative latitude.** Every concept declares a traceable
+   `lineage_ref`. A recipe may separately declare an `execution_ref` for a
+   format or audiovisual pattern—even from another lineage. Structural matching
+   applies only when that execution reference is `competitor_pattern`;
+   otherwise the agent is free to invent hook, composition, copy, scenes,
+   pacing, format, and visual language. Validators never score taste.
 2. **A local receipt never proves external state.** Publishing needs a fresh
    capability receipt, a live destination readback, and a byte-canonical
    `PAUSED` readback envelope from the platform. An `ACTIVE` provider response
@@ -165,7 +178,8 @@ The publish path is where agent pipelines usually lie, so it's the most
 defended surface here. Creating one ad requires, in order:
 
 1. **Capability receipt** (&lt; 60 min old) naming the real discovered platform
-   tools — including a readback tool that is *not* a create tool.
+   tools — including a strictly read-only tool, never a create/update/delete
+   or other write operation.
 2. **Readiness receipts** from live checks: the store destination is up, the
    platform has received app events, attribution is mapped. Raw responses are
    stored with their sha256.
@@ -204,7 +218,7 @@ requires the live readback observed in the current run.
 
 ## ✅ Quality bar
 
-- **284 tests** (`python3 -m pytest`) — validators, receipts, hardening, contracts
+- **321 tests** (`python3 -m unittest discover -s tests -v`) — validators, receipts, hardening, contracts
 - **Typechecked video** (`cd remotion && npm run typecheck`)
 - **CI** runs the full suite *plus a real Remotion render* with sealed QA prep
 - Fictional demo data only; the repo ships **zero** real product or ad-account data
@@ -213,7 +227,7 @@ requires the live readback observed in the current run.
 
 1. Competitors' **public** signals only; their art, media, voices and copy are never reused.
 2. No religious or sensitive-interest ad targeting — context lives in the creative, language and country.
-3. Agents author; validators enforce; humans authorize activation/budget/spend.
+3. Agents author freely; validators enforce truth/rights/state; humans authorize activation/budget/spend.
 4. Every bound on coverage is logged — silent truncation is treated as lying.
 
 ## 🤝 Contributing & security

@@ -253,11 +253,8 @@ def validate_recipe(app, voice, recipe_path):
     if image_file and not config_path(image_file).exists():
         errors.append(f"[{stem}] imagem não encontrada: {image_file}")
 
-    # Current image templates retain competitor-pattern lineage.
-    if not recipe.get("swiped_from"):
-        errors.append(
-            f"[{stem}] sem 'swiped_from' — declare o padrão observado que foi adaptado"
-        )
+    # Whether swiped_from is required depends on the bound concept lineage.
+    # forge.preflight resolves the brief and applies the competitor-only gate.
     raw = recipe_path.read_text()
     if "⚠️" in raw or "PLACEHOLDER" in raw.upper():
         errors.append(f"[{stem}] contém PLACEHOLDER — publicação bloqueada")

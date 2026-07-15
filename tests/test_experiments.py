@@ -5,7 +5,7 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
-from scripts import experiments
+from scripts import experiments, publish
 
 
 def canonical_json_bytes(value):
@@ -18,7 +18,18 @@ def canonical_json_bytes(value):
 class ExperimentContractTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.evidence_root = Path(self.temp.name)
+        self.evidence_root = Path(self.temp.name).resolve()
+        self.app_config_path = (
+            self.evidence_root / "apps" / "sunrise-demo.yaml"
+        )
+        self.app_config_path.parent.mkdir(parents=True)
+        self.app_config_path.write_text(
+            "version: 1\n"
+            "slug: sunrise-demo\n"
+            "readiness:\n"
+            "  required_receipts:\n"
+            "    app_store_destination: required_live\n"
+        )
         self.response_relative = Path("readbacks/paused-item.json")
         self.response_path = self.evidence_root / self.response_relative
         self.response_path.parent.mkdir(parents=True)
@@ -71,15 +82,56 @@ class ExperimentContractTests(unittest.TestCase):
             "campaign_id": "campaign-123",
             "ad_set_id": "adset-123",
             "created_at": "2026-07-10T11:50:00Z",
-            "readback_requirement": {"tool": "ads_get_ad"},
+            "requested_status": "PAUSED",
+            "activation_allowed": False,
+            "readback_requirement": {
+                "provider": "meta_ads_mcp",
+                "tool": "ads_get_ad",
+                "verification_basis": "live_provider_readback",
+                "local_validation_sufficient": False,
+            },
+            "destination": {
+                "ref": "default",
+                "type": "app_store",
+                "url": "https://apps.apple.com/app/id1",
+                "custom_product_page_id": None,
+            },
+            "app_config_provenance": {
+                "path": str(self.app_config_path),
+                "resolved_path": str(self.app_config_path.resolve()),
+                "sha256": hashlib.sha256(
+                    self.app_config_path.read_bytes()
+                ).hexdigest(),
+                "readiness_policy_digest": publish.canonical_digest(
+                    {
+                        "required_receipts": {
+                            "app_store_destination": "required_live"
+                        }
+                    }
+                ),
+            },
             "destination_readiness": {
                 "receipt_type": "app_store_destination",
+                "provider": "app_store_connect_api",
+                "tool": "apps_get_app_store_version_localizations",
+                "app": "sunrise-demo",
+                "status": "ready",
+                "destination": {
+                    "ref": "default",
+                    "type": "app_store",
+                    "url": "https://apps.apple.com/app/id1",
+                    "custom_product_page_id": None,
+                },
+                "observed_at": "2026-07-10T11:55:00Z",
                 "response_path": self.readiness_relative.as_posix(),
                 "response_digest": hashlib.sha256(
                     self.readiness_path.read_bytes()
                 ).hexdigest(),
+                "verification_basis": "live_provider_readback",
+                "local_validation_sufficient": False,
             },
             "runtime_readiness": [],
+            "required_readiness_receipt_types": ["app_store_destination"],
             "items": [
                 {
                     "item_key": "item-123",
@@ -87,6 +139,7 @@ class ExperimentContractTests(unittest.TestCase):
                     "concept_id": "morning-walk-relief",
                     "variant_id": "morning-walk",
                     "sha256": "f" * 64,
+                    "requested_status": "PAUSED",
                 }
             ],
         }
@@ -219,6 +272,7 @@ class ExperimentContractTests(unittest.TestCase):
             publish_receipt=receipt,
             metrics_source=raw_metrics,
             evidence_root=self.evidence_root,
+            workspace_root=self.evidence_root,
         )
 
     def test_valid_experiment_and_computed_metrics_pass(self):
@@ -237,15 +291,19 @@ class ExperimentContractTests(unittest.TestCase):
 
         no_receipt = experiments.audit_experiment(
             experiment,
+            expected_app="sunrise-demo",
             manifest=manifest,
             metrics_source=raw_metrics,
             evidence_root=self.evidence_root,
+            workspace_root=self.evidence_root,
         )
         no_metrics = experiments.audit_experiment(
             experiment,
+            expected_app="sunrise-demo",
             manifest=manifest,
             publish_receipt=receipt,
             evidence_root=self.evidence_root,
+            workspace_root=self.evidence_root,
         )
 
         self.assertTrue(any("publish receipt" in error for error in no_receipt["errors"]))

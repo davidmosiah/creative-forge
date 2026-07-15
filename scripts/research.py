@@ -179,12 +179,22 @@ def swipe_alignment_errors(
     template_swipe_angles: list,
     research_refs: list,
     research_data: dict,
+    *,
+    execution_lineage: str = "competitor_pattern",
+    execution_ref: str | None = None,
+    swiped_from: str | None = None,
 ) -> list:
     """Competitor-pattern recipes must materialize at least one cited angle.
 
     Alignment proves lineage only; it never proves competitor performance.
     Unresolved refs are judged by validate_research_refs, not here."""
     errors = []
+    if execution_lineage != "competitor_pattern":
+        return errors
+    if not str(swiped_from or "").strip():
+        errors.append(
+            f"{recipe_name}: competitor_pattern sem swiped_from — declare a estrutura observada"
+        )
     template_angles = {norm_angle(a) for a in template_swipe_angles or [] if a}
     if not template_angles:
         errors.append(
@@ -193,10 +203,20 @@ def swipe_alignment_errors(
         )
         return errors
     by_id = {c.get("id"): c for c in research_data.get("creatives", []) or []}
+    refs_for_alignment = [execution_ref] if execution_ref else list(research_refs or [])
+    if execution_ref and execution_ref not in research_refs:
+        errors.append(
+            f"{recipe_name}: execution_ref '{execution_ref}' não está em research_refs"
+        )
+    anchor = by_id.get(execution_ref) if execution_ref else None
+    if anchor is not None and anchor.get("lineage") != "competitor_pattern":
+        errors.append(
+            f"{recipe_name}: execution_ref '{execution_ref}' não é competitor_pattern"
+        )
     cited_angles = {
         norm_angle(by_id[ref].get("angle"))
-        for ref in research_refs or []
-        if ref in by_id
+        for ref in refs_for_alignment
+        if ref in by_id and by_id[ref].get("lineage", "competitor_pattern") == "competitor_pattern"
     }
     cited_angles.discard("")
     if cited_angles and not (cited_angles & template_angles):

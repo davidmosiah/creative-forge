@@ -143,6 +143,7 @@ class VideoWorkflowTests(unittest.TestCase):
                         {
                             "id": "demo-concept",
                             "lineage": "competitor_pattern",
+                            "lineage_ref": "reference-video",
                             "research_refs": ["reference-video"],
                             "agent_rationale": "Test the observed structure with owned assets.",
                         }
@@ -226,6 +227,7 @@ class VideoWorkflowTests(unittest.TestCase):
             "safe_zones": {"top": 0.14, "bottom": 0.20},
             "claims_used": ["daily_ritual"],
             "research_refs": ["reference-video"],
+            "execution_ref": "reference-video",
             "asset_refs": ["demo-icon"],
             "references": [
                 {
@@ -329,6 +331,67 @@ class VideoWorkflowTests(unittest.TestCase):
         result = self.audit()
 
         self.assertEqual(result["errors"], [])
+
+    def test_original_video_execution_does_not_require_a_structural_reference(self):
+        candidate = deepcopy(self.recipe)
+        candidate.pop("execution_ref")
+        candidate["references"] = []
+
+        result = self.audit(candidate)
+
+        self.assertEqual(result["errors"], [])
+
+    def test_original_video_can_use_concept_research_without_video_patterns_file(self):
+        candidate = deepcopy(self.recipe)
+        candidate.pop("execution_ref")
+        candidate["references"] = []
+        competitor_path = self.root / "swipe" / "demo" / "competitors.yaml"
+        competitor_path.write_text(
+            yaml.safe_dump(
+                {
+                    "creatives": [
+                        {
+                            "id": "reference-video",
+                            "lineage": "competitor_pattern",
+                            "evidence_level": "observed",
+                            "source_url": "https://example.com/concept-evidence",
+                        }
+                    ]
+                },
+                sort_keys=False,
+            )
+        )
+        self.pattern_path.unlink()
+
+        result = self.audit(candidate)
+
+        self.assertEqual(result["errors"], [])
+
+    def test_duplicate_research_id_cannot_conflict_across_video_registries(self):
+        competitor_path = self.root / "swipe" / "demo" / "competitors.yaml"
+        competitor_path.write_text(
+            yaml.safe_dump(
+                {
+                    "version": 1,
+                    "app": "demo",
+                    "creatives": [
+                        {
+                            "id": "reference-video",
+                            "source_url": "https://www.facebook.com/ads/library/?id=999",
+                            "lineage": "competitor_pattern",
+                        }
+                    ],
+                },
+                sort_keys=False,
+            )
+        )
+
+        result = self.audit()
+
+        self.assertTrue(
+            any("registry conflict" in error for error in result["errors"]),
+            result["errors"],
+        )
 
     def test_app_identity_registry_and_video_patterns_are_fail_closed(self):
         audit_recipe = self.function("audit_recipe")

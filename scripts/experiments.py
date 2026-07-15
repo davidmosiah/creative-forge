@@ -134,12 +134,16 @@ def audit_publish_receipt_binding(
     manifest: dict,
     receipt: dict,
     *,
+    expected_app: str | None,
     evidence_root: Path,
+    workspace_root: Path,
 ) -> list:
     errors = publish.verify_receipt(
         manifest,
         receipt,
+        expected_app=expected_app,
         evidence_root=evidence_root,
+        workspace_root=workspace_root,
         enforce_freshness=False,
     )
     expected_digest = canonical_digest(receipt)
@@ -347,6 +351,7 @@ def audit_experiment(
     metrics_source=None,
     briefs_root: Path | None = None,
     evidence_root: Path = ROOT,
+    workspace_root: Path = ROOT,
 ) -> dict:
     errors, warnings = [], []
     if data.get("version") != 1:
@@ -377,7 +382,11 @@ def audit_experiment(
         r"[0-9a-f]{64}", str(data.get("publish_receipt_digest"))
     ):
         errors.append("experiment.publish_receipt_digest precisa ser SHA-256")
-    if expected_app is not None and data.get("app") != expected_app:
+    if not isinstance(expected_app, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*", expected_app
+    ):
+        errors.append("experiment.expected_app externo é obrigatório e deve ser canônico")
+    elif data.get("app") != expected_app:
         errors.append(
             f"experiment.app '{data.get('app')}' diverge do app '{expected_app}'"
         )
@@ -455,7 +464,9 @@ def audit_experiment(
                     data,
                     manifest,
                     publish_receipt,
+                    expected_app=expected_app,
                     evidence_root=Path(evidence_root),
+                    workspace_root=Path(workspace_root),
                 )
             )
     errors.extend(audit_metrics_provenance(data, metrics_source, manifest))
@@ -524,7 +535,12 @@ def main() -> None:
         default=str(ROOT),
         help="root local dos response_path selados no publish receipt",
     )
-    parser.add_argument("--app")
+    parser.add_argument(
+        "--workspace-root",
+        default=str(ROOT),
+        help="root canônico contendo apps/<app>.yaml",
+    )
+    parser.add_argument("--app", required=True)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     data = load_yaml(Path(args.file))
@@ -538,6 +554,7 @@ def main() -> None:
         publish_receipt=publish_receipt,
         metrics_source=metrics_source,
         evidence_root=Path(args.evidence_root),
+        workspace_root=Path(args.workspace_root),
     )
     result = {**audit, "calculated_metrics": calculate_metrics(data)}
     if args.json:
